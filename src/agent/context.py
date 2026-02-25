@@ -43,6 +43,7 @@ class AgentContext:
             Session 对象
         """
         from .session import Session
+
         context = await self.session_manager.get_or_create_session(
             session_id=session_id,
             model_profile_id=model_profile_id,

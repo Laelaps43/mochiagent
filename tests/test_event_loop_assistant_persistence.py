@@ -74,7 +74,7 @@ async def test_call_llm_turn_uses_finish_assistant_message_for_persistence():
         get_agent=lambda _: SimpleNamespace(
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
-        )
+        ),
     )
 
     loop = AgentEventLoop(
@@ -129,7 +129,11 @@ async def test_conversation_loop_tool_branch_uses_finish_assistant_message():
             return {
                 "content": "",
                 "tool_calls": [
-                    {"id": "call_1", "type": "function", "function": {"name": "echo", "arguments": "{}"}}
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "echo", "arguments": "{}"},
+                    }
                 ],
                 "finish_reason": "tool_calls",
                 "cost": 0.0,

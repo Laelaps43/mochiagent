@@ -431,7 +431,9 @@ class AgentEventLoop:
             if not accumulated_tool_calls:
                 await self.session_manager.finish_assistant_message(
                     session_id=session_id,
-                    cost=total_cost, tokens=total_tokens, finish=finish_reason or "stop"
+                    cost=total_cost,
+                    tokens=total_tokens,
+                    finish=finish_reason or "stop",
                 )
 
             return {

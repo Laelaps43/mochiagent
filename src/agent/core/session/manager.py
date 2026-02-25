@@ -211,7 +211,9 @@ class SessionManager:
                     self._cache[session_id] = context
                     self._state_machines[session_id] = state_machine
 
-                    await self._refresh_model_profile_if_needed(session_id, context, model_profile_id)
+                    await self._refresh_model_profile_if_needed(
+                        session_id, context, model_profile_id
+                    )
 
                     logger.info(f"Loaded session from storage: {session_id}")
                     return context
