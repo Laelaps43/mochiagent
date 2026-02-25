@@ -5,7 +5,7 @@ from typing import Type, List, Optional
 from loguru import logger
 
 from .core.bus import MessageBus
-from .core.llm import LLMProvider, ProviderRegistry
+from .core.llm import LLMProvider, AdapterRegistry
 from .core.loop import AgentEventLoop
 from .core.session import SessionContext, SessionManager, SessionStateMachine
 from .core.storage import StorageProvider, MemoryStorage
@@ -53,6 +53,7 @@ def get_registered_agents() -> List[Type[BaseAgent]]:
 async def setup(
     storage: Optional[StorageProvider] = None,
     agents: Optional[List[BaseAgent]] = None,
+    llm_configs: Optional[List[LLMConfig]] = None,
     max_concurrent: int = 50,
     max_iterations: int = 100,
 ) -> None:
@@ -62,6 +63,7 @@ async def setup(
     Args:
         storage: Storage provider（默认 MemoryStorage）
         agents: Agent 实例列表
+        llm_configs: 初始化时注册的 LLM 配置列表（profile_id = provider:model）
         max_concurrent: 消息总线最大并发
         max_iterations: 单次对话最大迭代轮数（LLM turn）
     """
@@ -82,6 +84,9 @@ async def setup(
     # 初始化框架
     await framework.initialize(resolved_storage)
     await framework.start()
+
+    if llm_configs:
+        framework.set_llm_configs(llm_configs)
 
     # 注册所有 Agent（会自动调用 agent.setup()）
     if agents:
@@ -128,7 +133,7 @@ __all__ = [
     "MessageBus",
     # Core - LLM
     "LLMProvider",
-    "ProviderRegistry",
+    "AdapterRegistry",
     # Core - Loop
     "AgentEventLoop",
     # Core - Session

@@ -3,7 +3,16 @@ import os
 import sys
 from pathlib import Path
 
-from agent import BaseAgent, Event, EventType, LLMConfig, Tool, get_agent, setup, shutdown
+from agent import (
+    BaseAgent,
+    Event,
+    EventType,
+    LLMConfig,
+    Tool,
+    get_agent,
+    setup,
+    shutdown,
+)
 
 
 class EchoTool(Tool):
@@ -52,12 +61,8 @@ async def run_once(prompt: str) -> None:
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     model = os.getenv("MOCHI_MODEL", "gpt-4o-mini")
 
-    await setup(agents=[DemoAgent()], max_concurrent=50, max_iterations=100)
-    agent = get_agent("demo_agent")
-    if agent is None:
-        raise RuntimeError("demo_agent not found")
-
     llm_config = LLMConfig(
+        adapter="openai_compatible",
         provider="openai",
         model=model,
         api_key=api_key,
@@ -66,7 +71,20 @@ async def run_once(prompt: str) -> None:
         openai_max_retries=2,
     )
 
-    session = await agent.take_session("examples-minimal-chat", llm_config)
+    await setup(
+        agents=[DemoAgent()],
+        llm_configs=[llm_config],
+        max_concurrent=50,
+        max_iterations=100,
+    )
+    agent = get_agent("demo_agent")
+    if agent is None:
+        raise RuntimeError("demo_agent not found")
+
+    session = await agent.take_session(
+        "examples-minimal-chat",
+        model_profile_id=f"openai:{model}",
+    )
     queue: asyncio.Queue[Event] = asyncio.Queue()
 
     async def listener(event: Event):

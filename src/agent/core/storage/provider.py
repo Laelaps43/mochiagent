@@ -29,7 +29,7 @@ class StorageProvider(ABC):
             session_data: 会话元数据字典，包含：
                 - session_id
                 - state
-                - llm_config
+                - model_profile_id
                 - metadata
                 - created_at
                 - updated_at

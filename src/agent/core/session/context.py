@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from loguru import logger
 
-from agent.types import LLMConfig, SessionState
+from agent.types import SessionState
 from agent.constants import UUID_PREFIX_LENGTH
 from agent.core.message import (
     Message,
@@ -38,13 +38,13 @@ class SessionContext:
     def __init__(
         self,
         session_id: str,
-        llm_config: LLMConfig,
+        model_profile_id: str,
         agent_name: str = "general",
         metadata: Optional[Dict[str, Any]] = None,
     ):
         self.session_id = session_id
         self.state = SessionState.IDLE
-        self.llm_config = llm_config
+        self.model_profile_id = model_profile_id
         self.agent_name = agent_name
         self.metadata = metadata or {}
         self.messages: List[Message] = []
@@ -70,7 +70,13 @@ class SessionContext:
         self.updated_at = datetime.now()
         return message
 
-    def build_assistant_message(self, parent_id: str) -> Message:
+    def build_assistant_message(
+        self,
+        parent_id: str,
+        *,
+        provider_id: str,
+        model_id: str,
+    ) -> Message:
         message_id = f"msg_{uuid4().hex[:UUID_PREFIX_LENGTH]}"
         message = Message(
             info=AssistantMessageInfo(
@@ -79,8 +85,8 @@ class SessionContext:
                 parent_id=parent_id,
                 time={"created": int(time.time() * 1000)},
                 agent=self.agent_name,
-                model_id=self.llm_config.model,
-                provider_id=self.llm_config.provider,
+                model_id=model_id,
+                provider_id=provider_id,
             ),
             parts=[],
         )
@@ -118,6 +124,11 @@ class SessionContext:
         self.updated_at = datetime.now()
         logger.info(f"Session {self.session_id} switched agent: {old_agent} -> {new_agent_name}")
 
+    def update_model_profile(self, model_profile_id: Optional[str]) -> None:
+        """更新会话绑定的模型 profile。"""
+        self.model_profile_id = model_profile_id
+        self.updated_at = datetime.now()
+
     def get_llm_messages(self) -> List[Dict[str, Any]]:
         llm_messages = []
         for message in self.messages:
@@ -128,7 +139,7 @@ class SessionContext:
         return {
             "session_id": self.session_id,
             "state": self.state.value,
-            "llm_config": self.llm_config.model_dump(),
+            "model_profile_id": self.model_profile_id,
             "agent_name": self.agent_name,
             "metadata": self.metadata,
             "created_at": self.created_at.isoformat(),
@@ -139,7 +150,7 @@ class SessionContext:
         return {
             "session_id": self.session_id,
             "state": self.state.value,
-            "llm_config": self.llm_config.model_dump(),
+            "model_profile_id": self.model_profile_id,
             "agent_name": self.agent_name,
             "metadata": self.metadata,
             "message_count": len(self.messages),
@@ -152,7 +163,7 @@ class SessionContext:
     def from_dict(cls, data: Dict[str, Any]) -> "SessionContext":
         context = cls(
             session_id=data["session_id"],
-            llm_config=LLMConfig(**data["llm_config"]),
+            model_profile_id=data.get("model_profile_id") or "",
             agent_name=data.get("agent_name", "general"),
             metadata=data.get("metadata", {}),
         )

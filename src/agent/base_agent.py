@@ -14,7 +14,7 @@ from .core.tools import Tool, ToolRegistry, ToolExecutor, ToolSecurityConfig
 from .common.skill import Skill
 from .common.tools import SkillTool
 from .context import AgentContext
-from .types import Event, LLMConfig, UserPartInput
+from .types import Event, UserPartInput
 from .session import Session
 
 if TYPE_CHECKING:
@@ -230,6 +230,22 @@ class BaseAgent(ABC):
         """
         pass
 
+    @property
+    def allowed_model_profiles(self) -> set[str] | None:
+        """
+        Agent 可使用的 model profile 列表（格式：provider:model）。
+        返回 None 表示不限制。
+        """
+        return None
+
+    @property
+    def default_model_profile(self) -> str | None:
+        """
+        Agent 默认使用的 model profile（格式：provider:model）。
+        返回 None 表示必须显式提供 model_profile_id。
+        """
+        return None
+
     def register_skill(self, skill_name: str) -> None:
         """
         注册一个 skill 到当前 agent
@@ -316,14 +332,14 @@ class BaseAgent(ABC):
     async def take_session(
         self,
         session_id: str,
-        llm_config: LLMConfig,
+        model_profile_id: Optional[str] = None,
     ) -> Session:
         """
         接管会话并返回 Session 对象
 
         Args:
             session_id: 会话 ID
-            llm_config: LLM 配置
+            model_profile_id: Framework 注册的模型 profile ID（可选）
 
         Returns:
             Session 对象
@@ -332,17 +348,23 @@ class BaseAgent(ABC):
             RuntimeError: If context not bound
 
         Example:
-            >>> from agent import LLMConfig
-            >>> config = LLMConfig(provider="openai", model="gpt-4")
             >>> agent = get_agent("analytics_agent")
-            >>> session = await agent.take_session(session_id, config)
+            >>> session = await agent.take_session(session_id, "default")
             >>> await session.push_message("用户消息")
         """
         if not self._ctx:
             raise RuntimeError(f"Agent {self.name} context not bound")
 
+        resolved_model_profile_id = model_profile_id or self.default_model_profile
+        if resolved_model_profile_id is None:
+            raise ValueError("model_profile_id is required when taking a session")
+
         # 先获取或创建 session
-        session = await self._ctx.get_session(self.name, session_id, llm_config)
+        session = await self._ctx.get_session(
+            self.name,
+            session_id,
+            model_profile_id=resolved_model_profile_id,
+        )
 
         # 再切换 session 到当前 agent
         await self._ctx.switch_session_agent(session_id, self.name)

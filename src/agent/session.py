@@ -42,3 +42,8 @@ class Session:
     def agent_name(self) -> str:
         """获取当前 Agent 名称"""
         return self._context.agent_name
+
+    @property
+    def model_profile_id(self) -> str | None:
+        """获取会话绑定的模型 profile ID。"""
+        return self._context.model_profile_id

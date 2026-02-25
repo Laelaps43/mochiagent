@@ -8,7 +8,7 @@ from loguru import logger
 
 from agent.core.bus import MessageBus
 from agent.core.message import Message, Part  # 移到顶层避免循环导入
-from agent.types import Event, EventType, LLMConfig, SessionState
+from agent.types import Event, EventType, SessionState
 from agent.core.storage import StorageProvider, MemoryStorage
 from .context import SessionContext
 from .state import SessionStateMachine
@@ -51,11 +51,13 @@ class SessionManager:
 
     async def create_session(
         self,
-        llm_config: LLMConfig,
         session_id: Optional[str] = None,
+        model_profile_id: str = "",
         agent_name: str = "general",
     ) -> SessionContext:
         """创建新会话"""
+        if not model_profile_id:
+            raise ValueError("model_profile_id is required")
         if not session_id:
             session_id = str(uuid.uuid4())
 
@@ -69,7 +71,7 @@ class SessionManager:
         # 创建会话上下文和状态机
         context = SessionContext(
             session_id=session_id,
-            llm_config=llm_config,
+            model_profile_id=model_profile_id,
             agent_name=agent_name,
         )
 
@@ -165,20 +167,26 @@ class SessionManager:
     async def get_or_create_session(
         self,
         session_id: str,
-        llm_config: Optional[LLMConfig] = None,
+        model_profile_id: str,
         agent_name: str = "general",
     ) -> SessionContext:
         """获取或创建会话（按需创建）"""
+        if not model_profile_id:
+            raise ValueError("model_profile_id is required")
         # 1. 快速路径：检查缓存
         if session_id in self._cache:
             logger.debug(f"Session {session_id} found in cache")
-            return self._cache[session_id]
+            context = self._cache[session_id]
+            await self._refresh_model_profile_if_needed(session_id, context, model_profile_id)
+            return context
 
         # 2. 慢速路径：需要锁保护（避免竞态条件）
         async with self._cache_lock:
             # 双重检查：可能在等待锁期间其他协程已经加载或创建了
             if session_id in self._cache:
-                return self._cache[session_id]
+                context = self._cache[session_id]
+                await self._refresh_model_profile_if_needed(session_id, context, model_profile_id)
+                return context
 
             # 3. 尝试从 Storage 加载（在锁内直接加载，避免调用 get_session）
             if await self.storage.session_exists(session_id):
@@ -203,19 +211,18 @@ class SessionManager:
                     self._cache[session_id] = context
                     self._state_machines[session_id] = state_machine
 
+                    await self._refresh_model_profile_if_needed(session_id, context, model_profile_id)
+
                     logger.info(f"Loaded session from storage: {session_id}")
                     return context
 
             # 4. 创建新会话（在锁内直接创建）
-            if not llm_config:
-                raise ValueError(f"Session {session_id} does not exist and llm_config is required")
-
             logger.info(f"Creating new session {session_id}")
 
             # 创建会话上下文
             context = SessionContext(
                 session_id=session_id,
-                llm_config=llm_config,
+                model_profile_id=model_profile_id,
                 agent_name=agent_name,
             )
 
@@ -256,6 +263,20 @@ class SessionManager:
 
             logger.error(f"Failed to save session {session_id}: {e}")
             raise
+
+    async def _refresh_model_profile_if_needed(
+        self,
+        session_id: str,
+        context: SessionContext,
+        model_profile_id: str,
+    ) -> None:
+        """刷新已有会话绑定的 model_profile_id 并回写存储。"""
+        if context.model_profile_id == model_profile_id:
+            return
+
+        context.update_model_profile(model_profile_id)
+        await self.storage.save_session(session_id, context.to_metadata_dict())
+        logger.info(f"Session {session_id} model_profile_id refreshed: {model_profile_id}")
 
     async def delete_session(self, session_id: str) -> None:
         """删除会话"""

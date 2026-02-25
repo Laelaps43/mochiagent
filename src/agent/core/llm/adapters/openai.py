@@ -20,6 +20,7 @@ from agent.core.llm.errors import (
     LLMRateLimitError,
     LLMTransportError,
 )
+from agent.core.security import redact_text
 from agent.types import LLMConfig, ToolDefinition
 
 try:
@@ -125,7 +126,7 @@ class OpenAIAdapter(LLMProvider):
                             if error_obj.get("code") is not None:
                                 meta["provider_code"] = str(error_obj.get("code"))
                             if error_obj.get("message"):
-                                meta["provider_message"] = str(error_obj.get("message"))
+                                meta["provider_message"] = redact_text(error_obj.get("message"))
                 except Exception:
                     pass
         except Exception:
@@ -180,7 +181,7 @@ class OpenAIAdapter(LLMProvider):
         x_log_id = meta["x_log_id"]
 
         if isinstance(exc, RateLimitError) or status_code == 429 or provider_code == "1302":
-            detail = provider_message or str(exc)
+            detail = provider_message or redact_text(str(exc))
             return LLMRateLimitError(
                 code="RATE_LIMITED",
                 message=(
@@ -201,7 +202,7 @@ class OpenAIAdapter(LLMProvider):
             or status_code in {408, 409, 429}
             or (isinstance(status_code, int) and status_code >= 500)
         )
-        detail = f"{type(exc).__name__}: {exc}"
+        detail = redact_text(f"{type(exc).__name__}: {exc}")
         if status_code is not None:
             message = (
                 f"{operation} failed"
@@ -235,7 +236,7 @@ class OpenAIAdapter(LLMProvider):
             provider_error.status_code,
             provider_error.provider_code,
             provider_error.x_log_id,
-            provider_error.message,
+            redact_text(provider_error.message),
         )
         if provider_error.hint:
             logger.error("[LLM][{}] hint={}", stage, provider_error.hint)
@@ -250,7 +251,7 @@ class OpenAIAdapter(LLMProvider):
             "[LLM][{}] exception type={} repr={}",
             stage,
             type(exc).__name__,
-            repr(exc),
+            redact_text(repr(exc)),
         )
 
         response = getattr(exc, "response", None)
@@ -264,7 +265,7 @@ class OpenAIAdapter(LLMProvider):
                     "[LLM][{}] response content-type={} body={}",
                     stage,
                     content_type,
-                    body_text,
+                    redact_text(body_text),
                 )
             except Exception:
                 pass

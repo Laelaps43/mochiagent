@@ -118,7 +118,8 @@ class Event:
 class LLMConfig(BaseModel):
     """LLM配置"""
 
-    provider: str  # openai, anthropic, etc.
+    adapter: str  # openai_compatible, anthropic, etc.
+    provider: str  # openai, zhipu, kimi, etc.
     model: str  # gpt-4, claude-3-sonnet, etc.
     api_key: Optional[str] = None
     base_url: Optional[str] = None

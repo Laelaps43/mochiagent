@@ -30,23 +30,22 @@ class AgentContext:
     session_manager: SessionManager
     message_bus: MessageBus
 
-    async def get_session(self, agent_name: str, session_id: str, llm_config=None):
+    async def get_session(self, agent_name: str, session_id: str, model_profile_id: str):
         """
         获取或创建会话
 
         Args:
             agent_name: Agent 名称
             session_id: 会话 ID
-            llm_config: LLM 配置（可选）
+            model_profile_id: Framework 注册的模型 profile ID
 
         Returns:
             Session 对象
         """
         from .session import Session
-
         context = await self.session_manager.get_or_create_session(
             session_id=session_id,
-            llm_config=llm_config,
+            model_profile_id=model_profile_id,
             agent_name=agent_name,
         )
         return Session(context, self.session_manager)

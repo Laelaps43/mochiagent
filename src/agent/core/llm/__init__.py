@@ -7,7 +7,7 @@ from .errors import (
     LLMRateLimitError,
     LLMTransportError,
 )
-from .provider import ProviderRegistry
+from .provider import AdapterRegistry
 
 __all__ = [
     "LLMProvider",
@@ -15,5 +15,5 @@ __all__ = [
     "LLMProtocolError",
     "LLMRateLimitError",
     "LLMTransportError",
-    "ProviderRegistry",
+    "AdapterRegistry",
 ]

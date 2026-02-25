@@ -12,32 +12,32 @@ from .base import LLMProvider
 from .adapters.openai import OpenAIAdapter
 
 
-class ProviderRegistry:
-    """LLM提供商注册表"""
+class AdapterRegistry:
+    """LLM适配器注册表"""
 
     def __init__(self):
         self._providers: Dict[str, Type[LLMProvider]] = {}
         self._register_defaults()
 
     def _register_defaults(self) -> None:
-        """注册默认提供商"""
-        self.register("openai", OpenAIAdapter)
-        logger.info("Registered default LLM providers (openai)")
+        """注册默认适配器"""
+        self.register("openai_compatible", OpenAIAdapter)
+        logger.info("Registered default LLM adapters (openai_compatible)")
 
     def register(self, name: str, provider_class: Type[LLMProvider]) -> None:
         """
-        注册LLM提供商
+        注册LLM适配器
 
         Args:
-            name: 提供商名称
-            provider_class: 提供商类
+            name: 适配器名称
+            provider_class: 适配器类
         """
         self._providers[name] = provider_class
         logger.debug(f"Registered LLM provider: {name}")
 
     def get(self, config: LLMConfig) -> LLMProvider:
         """
-        获取LLM提供商实例
+        获取LLM适配器实例
 
         Args:
             config: LLM配置
@@ -46,19 +46,19 @@ class ProviderRegistry:
             LLMProvider实例
 
         Raises:
-            ValueError: 如果提供商不存在
+            ValueError: 如果适配器不存在
         """
-        provider_name = config.provider
+        provider_name = config.adapter
 
         if provider_name not in self._providers:
             available = ", ".join(sorted(self._providers.keys())) or "<none>"
             raise ValueError(
-                f"Provider '{provider_name}' not found. Available providers: {available}"
+                f"Adapter '{provider_name}' not found. Available adapters: {available}"
             )
 
         provider_class = self._providers[provider_name]
         return provider_class(config)
 
-    def list_providers(self) -> list[str]:
-        """列出所有已注册的提供商"""
+    def list_adapters(self) -> list[str]:
+        """列出所有已注册的适配器"""
         return list(self._providers.keys())

@@ -87,13 +87,8 @@ class DemoAgent(BaseAgent):
 
 
 async def main() -> None:
-    await setup(agents=[DemoAgent()], max_concurrent=50, max_iterations=100)
-
-    agent = get_agent("demo_agent")
-    if agent is None:
-        raise RuntimeError("demo_agent not found")
-
     llm_config = LLMConfig(
+        adapter="openai_compatible",
         provider="openai",
         model="gpt-4o-mini",
         api_key="YOUR_API_KEY",
@@ -101,8 +96,21 @@ async def main() -> None:
         stream=True,
         openai_max_retries=2,
     )
+    await setup(
+        agents=[DemoAgent()],
+        llm_configs=[llm_config],
+        max_concurrent=50,
+        max_iterations=100,
+    )
 
-    session = await agent.take_session("demo-session-1", llm_config)
+    agent = get_agent("demo_agent")
+    if agent is None:
+        raise RuntimeError("demo_agent not found")
+
+    session = await agent.take_session(
+        "demo-session-1",
+        model_profile_id="openai:gpt-4o-mini",
+    )
     queue: asyncio.Queue[Event] = asyncio.Queue()
 
     async def listener(event: Event):
@@ -319,6 +327,7 @@ message.done
 | 参数             | 类型              |            默认值 | 说明                        |
 | ---------------- | ----------------- | ----------------: | --------------------------- |
 | `agents`         | `list[BaseAgent]` |            `None` | 要注册的 Agent 实例列表     |
+| `llm_configs`    | `list[LLMConfig]` |            `None` | 初始化加载 LLM 配置（必选于实际对话） |
 | `storage`        | `StorageProvider` | `MemoryStorage()` | 会话/消息/artifact 存储后端 |
 | `max_concurrent` | `int`             |              `50` | 事件处理最大并发            |
 | `max_iterations` | `int`             |             `100` | 单次对话最大 LLM 轮数       |
@@ -327,6 +336,7 @@ message.done
 
 | 字段                 | 类型             | 默认值 | 说明                       |
 | -------------------- | ---------------- | -----: | -------------------------- |
+| `adapter`            | `str`            |      - | 适配器标识（如 `openai_compatible`） |
 | `provider`           | `str`            |      - | 提供商标识（如 `openai`）  |
 | `model`              | `str`            |      - | 模型名                     |
 | `api_key`            | `str \| None`    | `None` | API Key                    |
@@ -371,10 +381,15 @@ message.done
 
 可接入 OpenAI 官方或任何兼容网关。
 
+- `adapter`：决定走哪个适配器实现（如 `openai_compatible`）
+- `provider`：业务侧供应商标识（如 `openai`、`zhipu`）
+- `model_profile_id` 固定格式：`provider:model`（例如 `zhipu:glm-4.7`）
+
 ```python
 from agent import LLMConfig
 
 llm_config = LLMConfig(
+    adapter="openai_compatible",
     provider="openai",
     model="gpt-4o-mini",
     api_key="YOUR_API_KEY",
@@ -387,7 +402,7 @@ llm_config = LLMConfig(
 
 ### 2) 自定义 Provider
 
-可实现 `LLMProvider` 并注册到 `ProviderRegistry`。
+可实现 `LLMProvider` 并注册到 `AdapterRegistry`。
 
 ```python
 from typing import Any, AsyncIterator
@@ -405,7 +420,7 @@ class MyProvider(LLMProvider):
 
 
 framework = get_framework()
-framework.provider_registry.register("my_provider", MyProvider)
+framework.adapter_registry.register("my_adapter", MyProvider)
 ```
 
 ## MCP 集成
@@ -499,10 +514,10 @@ git push origin v0.1.0
 
 ## 核心 API
 
-- `setup(agents, storage, max_concurrent, max_iterations)`
+- `setup(agents, llm_configs, storage, max_concurrent, max_iterations)`
 - `get_agent(agent_name)`
 - `shutdown()`
-- `BaseAgent.take_session(session_id, llm_config)`
+- `BaseAgent.take_session(session_id, model_profile_id)`
 - `BaseAgent.push_message(session_id, message)`
 - `BaseAgent.register_skill(skill_name)`
 - `Session.add_listener(listener)` / `Session.remove_listener(listener)`

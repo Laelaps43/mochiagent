@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from agent.core.bus import MessageBus
-from agent.core.llm import ProviderRegistry
+from agent.core.llm import AdapterRegistry
 from agent.core.llm.errors import LLMProviderError
 from agent.core.prompt import inject_system_prompt
 from agent.core.session import SessionManager
@@ -48,13 +48,13 @@ class AgentEventLoop:
         self,
         bus: MessageBus,
         session_manager: SessionManager,
-        provider_registry: ProviderRegistry,
+        adapter_registry: AdapterRegistry,
         framework: AgentFramework,
         max_iterations: int = 100,
     ):
         self.bus = bus
         self.session_manager = session_manager
-        self.provider_registry = provider_registry
+        self.adapter_registry = adapter_registry
         self.framework = framework
         self.max_iterations = max(1, max_iterations)
         self.tool_result_postprocessor = ToolResultPostProcessor()
@@ -217,8 +217,8 @@ class AgentEventLoop:
                     await self._execute_tools(session_id, tool_calls)
 
                     # 2.3 工具执行完成后，完成当前消息
-                    context = await self.session_manager.get_session(session_id)
-                    context.finish_current_message(
+                    await self.session_manager.finish_assistant_message(
+                        session_id=session_id,
                         cost=result.get("cost", 0.0),
                         tokens=result.get("tokens", {}),
                         finish=result.get("finish_reason", "tool_calls"),
@@ -311,16 +311,31 @@ class AgentEventLoop:
         """
         context = await self.session_manager.get_session(session_id)
 
+        if not context.model_profile_id:
+            raise ValueError(
+                f"Session {session_id} has no model_profile_id. "
+                "Please take_session with a valid model_profile_id first."
+            )
+
+        llm_config = self.framework.resolve_llm_config_for_agent(
+            context.agent_name,
+            context.model_profile_id,
+        )
+
         # 注意：不在这里设置 STREAMING 状态
         # 状态已经在 _conversation_loop 中设置为 PROCESSING
         # 流式输出期间保持 PROCESSING 状态
 
         # 获取LLM Provider (使用注入的 registry)
-        llm = self.provider_registry.get(context.llm_config)
+        llm = self.adapter_registry.get(llm_config)
 
         # 构建 AssistantMessage
         last_user_msg = context.messages[-1]
-        assistant_msg = context.build_assistant_message(parent_id=last_user_msg.message_id)
+        assistant_msg = context.build_assistant_message(
+            parent_id=last_user_msg.message_id,
+            provider_id=llm_config.provider,
+            model_id=llm_config.model,
+        )
         message_id = assistant_msg.message_id
 
         # 累积变量
@@ -414,7 +429,8 @@ class AgentEventLoop:
             # 如果没有工具调用，完成消息
             # 如果有工具调用，消息会在工具执行后完成
             if not accumulated_tool_calls:
-                context.finish_current_message(
+                await self.session_manager.finish_assistant_message(
+                    session_id=session_id,
                     cost=total_cost, tokens=total_tokens, finish=finish_reason or "stop"
                 )
 
