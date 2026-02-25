@@ -112,7 +112,7 @@ async def shutdown() -> None:
     await framework.stop()
 
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # High-level API (用户主要使用这些)
