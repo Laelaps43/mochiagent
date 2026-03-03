@@ -86,6 +86,12 @@ class OpenAIAdapter(LLMProvider):
         if tools:
             params["tools"] = self._prepare_tools(tools)
             params["tool_choice"] = "auto"
+        if stream:
+            stream_options = params.get("stream_options")
+            if isinstance(stream_options, dict):
+                stream_options.setdefault("include_usage", True)
+            elif stream_options is None:
+                params["stream_options"] = {"include_usage": True}
 
         params.update(self.config.extra_params)
         params.update(kwargs)
@@ -326,6 +332,12 @@ class OpenAIAdapter(LLMProvider):
             if accumulated_tool_calls:
                 ordered_calls = [accumulated_tool_calls[k] for k in sorted(accumulated_tool_calls)]
                 result["tool_calls"] = ordered_calls
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            if hasattr(usage, "model_dump"):
+                result["usage"] = usage.model_dump(exclude_none=True)
+            elif isinstance(usage, dict):
+                result["usage"] = usage
 
         return result or None
 

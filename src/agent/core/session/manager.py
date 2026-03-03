@@ -350,6 +350,11 @@ class SessionManager:
 
             logger.debug(f"Finished and saved assistant message: {last_message.info.id}")
 
+    async def save_session_metadata(self, session_id: str) -> None:
+        """回写会话元数据（不涉及消息历史）。"""
+        context = await self.get_session(session_id)
+        await self.storage.save_session(session_id, context.to_metadata_dict())
+
     async def add_part_to_current(self, session_id: str, part: Part) -> None:
         """添加 Part 到当前消息"""
         context = await self.get_session(session_id)

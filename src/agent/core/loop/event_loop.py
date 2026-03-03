@@ -120,6 +120,7 @@ class AgentEventLoop:
                     "message_id": message_id,
                     "cost": 0.0,
                     "tokens": {},
+                    "context_budget": await self._current_context_budget(session_id),
                     "finish": "error",
                 },
             )
@@ -244,6 +245,8 @@ class AgentEventLoop:
                             "message_id": result.get("message_id"),
                             "cost": result.get("cost", 0.0),
                             "tokens": result.get("tokens", {}),
+                            "context_budget": result.get("context_budget")
+                            or await self._current_context_budget(session_id),
                             "finish": result.get("finish_reason", "stop"),
                         },
                     )
@@ -281,6 +284,7 @@ class AgentEventLoop:
                         ),
                         "cost": 0.0,
                         "tokens": {},
+                        "context_budget": await self._current_context_budget(session_id),
                         "finish": "max_iterations_exceeded",
                     },
                 )
@@ -347,6 +351,7 @@ class AgentEventLoop:
         total_tokens = {"input": 0, "output": 0, "reasoning": 0}
         total_cost = 0.0
         chunk_count = 0
+        provider_usage: dict | None = None
 
         try:
             # 流式调用LLM（将 Part 格式转换为 LLM API 格式）
@@ -425,6 +430,18 @@ class AgentEventLoop:
                 # 4. 处理结束
                 if "finish_reason" in chunk:
                     finish_reason = chunk["finish_reason"]
+                if "usage" in chunk and isinstance(chunk["usage"], dict):
+                    provider_usage = chunk["usage"]
+
+            total_tokens, source = self._extract_turn_tokens_from_usage(provider_usage)
+            context_budget = context.update_context_budget(
+                total_tokens=llm_config.context_window_tokens,
+                input_tokens=total_tokens.get("input", 0),
+                output_tokens=total_tokens.get("output", 0),
+                reasoning_tokens=total_tokens.get("reasoning", 0),
+                source=source,
+            )
+            await self._persist_session_metadata(session_id)
 
             # 如果没有工具调用，完成消息
             # 如果有工具调用，消息会在工具执行后完成
@@ -442,6 +459,7 @@ class AgentEventLoop:
                 "finish_reason": finish_reason,
                 "cost": total_cost,
                 "tokens": total_tokens,
+                "context_budget": context_budget,
                 "message_id": message_id,
             }
 
@@ -466,6 +484,52 @@ class AgentEventLoop:
         if provider_error:
             return provider_error.message, provider_error.code, provider_error.hint
         return f"{type(exc).__name__}: {exc}", None, None
+
+    @staticmethod
+    def _token_to_int(value: object) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return max(value, 0)
+        if isinstance(value, float):
+            return max(int(value), 0)
+        return 0
+
+    @classmethod
+    def _extract_turn_tokens_from_usage(cls, usage: dict | None) -> tuple[dict[str, int], str]:
+        if not usage:
+            return {"input": 0, "output": 0, "reasoning": 0}, "estimated"
+
+        input_tokens = cls._token_to_int(
+            usage.get("prompt_tokens", usage.get("input_tokens", 0))
+        )
+        output_tokens = cls._token_to_int(
+            usage.get("completion_tokens", usage.get("output_tokens", 0))
+        )
+        reasoning_tokens = cls._token_to_int(usage.get("reasoning_tokens", 0))
+        if reasoning_tokens == 0:
+            details = usage.get("completion_tokens_details")
+            if isinstance(details, dict):
+                reasoning_tokens = cls._token_to_int(details.get("reasoning_tokens", 0))
+
+        return {
+            "input": input_tokens,
+            "output": output_tokens,
+            "reasoning": reasoning_tokens,
+        }, "provider"
+
+    async def _persist_session_metadata(self, session_id: str) -> None:
+        saver = getattr(self.session_manager, "save_session_metadata", None)
+        if not callable(saver):
+            return
+        await saver(session_id)
+
+    async def _current_context_budget(self, session_id: str) -> dict:
+        try:
+            context = await self.session_manager.get_session(session_id)
+        except Exception:
+            return {}
+        return dict(getattr(context, "context_budget", {}) or {})
 
     async def _execute_tools(self, session_id: str, tool_calls: list) -> list:
         """

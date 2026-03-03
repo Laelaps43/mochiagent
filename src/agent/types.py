@@ -125,6 +125,7 @@ class LLMConfig(BaseModel):
     base_url: Optional[str] = None
     temperature: float = 0.7
     max_tokens: Optional[int] = None
+    context_window_tokens: Optional[int] = None
     stream: bool = True
     timeout: int = 60
     openai_max_retries: Optional[int] = None

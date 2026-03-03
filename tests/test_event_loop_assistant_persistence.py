@@ -15,6 +15,7 @@ class _SessionManagerStub:
         self._context = context
         self.finish_calls: list[dict] = []
         self.states: list[SessionState] = []
+        self.metadata_save_calls = 0
 
     async def get_session(self, session_id: str) -> SessionContext:
         return self._context
@@ -43,11 +44,27 @@ class _SessionManagerStub:
         self.states.append(new_state)
         self._context.update_state(new_state)
 
+    async def save_session_metadata(self, session_id: str) -> None:
+        self.metadata_save_calls += 1
+
 
 class _LLMNoToolStub:
     async def stream_chat(self, messages, tools=None):
         yield {"content": "hello"}
         yield {"finish_reason": "stop"}
+
+
+class _LLMNoToolWithUsageStub:
+    async def stream_chat(self, messages, tools=None):
+        yield {"content": "hello"}
+        yield {
+            "usage": {
+                "prompt_tokens": 120,
+                "completion_tokens": 30,
+                "completion_tokens_details": {"reasoning_tokens": 7},
+            },
+            "finish_reason": "stop",
+        }
 
 
 class _AdapterRegistryStub:
@@ -89,6 +106,85 @@ async def test_call_llm_turn_uses_finish_assistant_message_for_persistence():
     assert result["finish_reason"] == "stop"
     assert len(session_manager.finish_calls) == 1
     assert session_manager.finish_calls[0]["session_id"] == "sess_no_tool"
+
+
+@pytest.mark.asyncio
+async def test_call_llm_turn_sets_context_budget_without_usage():
+    context = SessionContext(
+        session_id="sess_budget_zero",
+        model_profile_id="safe",
+        agent_name="agent_stub",
+    )
+    context.build_user_message(parts=[{"type": "text", "text": "hi"}])
+    session_manager = _SessionManagerStub(context)
+
+    framework = SimpleNamespace(
+        resolve_llm_config_for_agent=lambda _agent, _profile: LLMConfig(
+            adapter="openai_compatible",
+            provider="openai",
+            model="mock",
+            context_window_tokens=1000,
+        ),
+        get_agent=lambda _: SimpleNamespace(
+            tool_registry=SimpleNamespace(get_definitions=lambda: []),
+            get_system_prompt=lambda _ctx: None,
+        ),
+    )
+
+    loop = AgentEventLoop(
+        bus=MessageBus(),
+        session_manager=session_manager,
+        adapter_registry=_AdapterRegistryStub(),
+        framework=framework,
+    )
+
+    result = await loop._call_llm_turn("sess_budget_zero")
+
+    assert result["tokens"] == {"input": 0, "output": 0, "reasoning": 0}
+    assert result["context_budget"]["source"] == "estimated"
+    assert result["context_budget"]["total_tokens"] == 1000
+    assert result["context_budget"]["used_tokens"] == 0
+    assert result["context_budget"]["remaining_tokens"] == 1000
+    assert session_manager.metadata_save_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_call_llm_turn_sets_context_budget_from_provider_usage():
+    context = SessionContext(
+        session_id="sess_budget_provider",
+        model_profile_id="safe",
+        agent_name="agent_stub",
+    )
+    context.build_user_message(parts=[{"type": "text", "text": "hi"}])
+    session_manager = _SessionManagerStub(context)
+
+    framework = SimpleNamespace(
+        resolve_llm_config_for_agent=lambda _agent, _profile: LLMConfig(
+            adapter="openai_compatible",
+            provider="openai",
+            model="mock",
+            context_window_tokens=2000,
+        ),
+        get_agent=lambda _: SimpleNamespace(
+            tool_registry=SimpleNamespace(get_definitions=lambda: []),
+            get_system_prompt=lambda _ctx: None,
+        ),
+    )
+
+    loop = AgentEventLoop(
+        bus=MessageBus(),
+        session_manager=session_manager,
+        adapter_registry=SimpleNamespace(get=lambda _cfg: _LLMNoToolWithUsageStub()),
+        framework=framework,
+    )
+
+    result = await loop._call_llm_turn("sess_budget_provider")
+
+    assert result["tokens"] == {"input": 120, "output": 30, "reasoning": 7}
+    assert result["context_budget"]["source"] == "provider"
+    assert result["context_budget"]["used_tokens"] == 157
+    assert result["context_budget"]["remaining_tokens"] == 1843
+    assert session_manager.metadata_save_calls == 1
 
 
 @pytest.mark.asyncio

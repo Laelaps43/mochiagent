@@ -10,6 +10,7 @@ def test_session_context_metadata_keeps_model_profile_only():
     data = context.to_metadata_dict()
     assert data["model_profile_id"] == "safe"
     assert "llm_config" not in data
+    assert "context_budget" in data
 
 
 def test_session_context_from_dict_without_llm_config():
@@ -23,3 +24,4 @@ def test_session_context_from_dict_without_llm_config():
         }
     )
     assert context.model_profile_id == "safe"
+    assert context.context_budget["used_tokens"] == 0

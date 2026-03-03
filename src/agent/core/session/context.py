@@ -47,6 +47,16 @@ class SessionContext:
         self.model_profile_id = model_profile_id
         self.agent_name = agent_name
         self.metadata = metadata or {}
+        self.context_budget: Dict[str, Any] = {
+            "total_tokens": None,
+            "used_tokens": 0,
+            "remaining_tokens": None,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "source": "estimated",
+            "updated_at_ms": int(time.time() * 1000),
+        }
         self.messages: List[Message] = []
         self.current_message: Optional[Message] = None
         self.created_at = datetime.now()
@@ -129,6 +139,33 @@ class SessionContext:
         self.model_profile_id = model_profile_id
         self.updated_at = datetime.now()
 
+    def update_context_budget(
+        self,
+        *,
+        total_tokens: int | None,
+        input_tokens: int,
+        output_tokens: int,
+        reasoning_tokens: int,
+        source: str,
+    ) -> Dict[str, Any]:
+        used_tokens = max(0, input_tokens) + max(0, output_tokens) + max(0, reasoning_tokens)
+        remaining_tokens = None
+        if total_tokens is not None:
+            remaining_tokens = max(total_tokens - used_tokens, 0)
+
+        self.context_budget = {
+            "total_tokens": total_tokens,
+            "used_tokens": used_tokens,
+            "remaining_tokens": remaining_tokens,
+            "input_tokens": max(0, input_tokens),
+            "output_tokens": max(0, output_tokens),
+            "reasoning_tokens": max(0, reasoning_tokens),
+            "source": source,
+            "updated_at_ms": int(time.time() * 1000),
+        }
+        self.updated_at = datetime.now()
+        return self.context_budget
+
     def get_llm_messages(self) -> List[Dict[str, Any]]:
         llm_messages = []
         for message in self.messages:
@@ -142,6 +179,7 @@ class SessionContext:
             "model_profile_id": self.model_profile_id,
             "agent_name": self.agent_name,
             "metadata": self.metadata,
+            "context_budget": self.context_budget,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
@@ -153,6 +191,7 @@ class SessionContext:
             "model_profile_id": self.model_profile_id,
             "agent_name": self.agent_name,
             "metadata": self.metadata,
+            "context_budget": self.context_budget,
             "message_count": len(self.messages),
             "messages": [msg.to_dict() for msg in self.messages],
             "created_at": self.created_at.isoformat(),
@@ -167,6 +206,18 @@ class SessionContext:
             agent_name=data.get("agent_name", "general"),
             metadata=data.get("metadata", {}),
         )
+        raw_budget = data.get("context_budget")
+        if isinstance(raw_budget, dict):
+            context.context_budget = {
+                "total_tokens": raw_budget.get("total_tokens"),
+                "used_tokens": int(raw_budget.get("used_tokens", 0) or 0),
+                "remaining_tokens": raw_budget.get("remaining_tokens"),
+                "input_tokens": int(raw_budget.get("input_tokens", 0) or 0),
+                "output_tokens": int(raw_budget.get("output_tokens", 0) or 0),
+                "reasoning_tokens": int(raw_budget.get("reasoning_tokens", 0) or 0),
+                "source": raw_budget.get("source", "estimated"),
+                "updated_at_ms": int(raw_budget.get("updated_at_ms", int(time.time() * 1000)) or 0),
+            }
         if "state" in data:
             context.state = SessionState(data["state"])
         if "created_at" in data:
