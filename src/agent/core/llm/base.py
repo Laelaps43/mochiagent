@@ -6,7 +6,9 @@ LLM Provider Base - LLM提供商基类
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-from agent.types import LLMConfig, ToolDefinition
+from agent.types import LLMConfig, Message as ChatMessage, ToolDefinition
+
+LLMMessageInput = ChatMessage
 
 
 class LLMProvider(ABC):
@@ -21,7 +23,7 @@ class LLMProvider(ABC):
     @abstractmethod
     async def stream_chat(
         self,
-        messages: List[Dict[str, Any]],
+        messages: List[LLMMessageInput],
         tools: Optional[List[ToolDefinition]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
@@ -44,7 +46,7 @@ class LLMProvider(ABC):
     @abstractmethod
     async def complete(
         self,
-        messages: List[Dict[str, Any]],
+        messages: List[LLMMessageInput],
         tools: Optional[List[ToolDefinition]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:

@@ -9,14 +9,26 @@ from uuid import uuid4
 
 from loguru import logger
 
-from agent.types import SessionState
+from agent.types import (
+    ContextBudget,
+    ContextBudgetSource,
+    Message as ChatMessage,
+    SessionData,
+    SessionMetadataData,
+    SessionState,
+)
 from agent.constants import UUID_PREFIX_LENGTH
+from .context_budget_utils import (
+    update_context_budget_from_raw,
+    update_context_budget_values,
+)
 from agent.core.message import (
     Message,
     UserMessageInfo,
     AssistantMessageInfo,
     Part,
-    create_part_from_dict,
+    UserMessagePartInput,
+    create_part_from_user_input,
 )
 
 
@@ -47,26 +59,14 @@ class SessionContext:
         self.model_profile_id = model_profile_id
         self.agent_name = agent_name
         self.metadata = metadata or {}
-        self.context_budget: Dict[str, Any] = {
-            "total_tokens": None,
-            "used_tokens": 0,
-            "remaining_tokens": None,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "reasoning_tokens": 0,
-            "source": "estimated",
-            "updated_at_ms": int(time.time() * 1000),
-        }
+        self.context_budget: ContextBudget = ContextBudget()
         self.messages: List[Message] = []
         self.current_message: Optional[Message] = None
         self.created_at = datetime.now()
         self.updated_at = datetime.now()
 
-    def build_user_message(self, parts: List[Dict[str, Any]]) -> Message:
+    def build_user_message(self, parts: List[UserMessagePartInput]) -> Message:
         message_id = f"msg_{uuid4().hex[:UUID_PREFIX_LENGTH]}"
-        message_parts = [
-            create_part_from_dict(part_data, self.session_id, message_id) for part_data in parts
-        ]
         message = Message(
             info=UserMessageInfo(
                 id=message_id,
@@ -74,7 +74,10 @@ class SessionContext:
                 time={"created": int(time.time() * 1000)},
                 agent=self.agent_name,
             ),
-            parts=message_parts,
+            parts=[
+                create_part_from_user_input(part_data, self.session_id, message_id)
+                for part_data in parts
+            ],
         )
         self.messages.append(message)
         self.updated_at = datetime.now()
@@ -146,52 +149,45 @@ class SessionContext:
         input_tokens: int,
         output_tokens: int,
         reasoning_tokens: int,
-        source: str,
-    ) -> Dict[str, Any]:
-        used_tokens = max(0, input_tokens) + max(0, output_tokens) + max(0, reasoning_tokens)
-        remaining_tokens = None
-        if total_tokens is not None:
-            remaining_tokens = max(total_tokens - used_tokens, 0)
-
-        self.context_budget = {
-            "total_tokens": total_tokens,
-            "used_tokens": used_tokens,
-            "remaining_tokens": remaining_tokens,
-            "input_tokens": max(0, input_tokens),
-            "output_tokens": max(0, output_tokens),
-            "reasoning_tokens": max(0, reasoning_tokens),
-            "source": source,
-            "updated_at_ms": int(time.time() * 1000),
-        }
+        source: ContextBudgetSource,
+    ) -> ContextBudget:
+        self.context_budget = update_context_budget_values(
+            self.context_budget,
+            total_tokens=total_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
+            source=source,
+        )
         self.updated_at = datetime.now()
         return self.context_budget
 
-    def get_llm_messages(self) -> List[Dict[str, Any]]:
-        llm_messages = []
+    def get_llm_messages(self) -> List[ChatMessage]:
+        llm_messages: List[ChatMessage] = []
         for message in self.messages:
             llm_messages.extend(message.to_llm_messages())
         return llm_messages
 
-    def to_metadata_dict(self) -> Dict[str, Any]:
+    def to_metadata_dict(self) -> SessionMetadataData:
         return {
             "session_id": self.session_id,
             "state": self.state.value,
             "model_profile_id": self.model_profile_id,
             "agent_name": self.agent_name,
             "metadata": self.metadata,
-            "context_budget": self.context_budget,
+            "context_budget": self.context_budget.to_dict(),
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> SessionData:
         return {
             "session_id": self.session_id,
             "state": self.state.value,
             "model_profile_id": self.model_profile_id,
             "agent_name": self.agent_name,
             "metadata": self.metadata,
-            "context_budget": self.context_budget,
+            "context_budget": self.context_budget.to_dict(),
             "message_count": len(self.messages),
             "messages": [msg.to_dict() for msg in self.messages],
             "created_at": self.created_at.isoformat(),
@@ -206,18 +202,7 @@ class SessionContext:
             agent_name=data.get("agent_name", "general"),
             metadata=data.get("metadata", {}),
         )
-        raw_budget = data.get("context_budget")
-        if isinstance(raw_budget, dict):
-            context.context_budget = {
-                "total_tokens": raw_budget.get("total_tokens"),
-                "used_tokens": int(raw_budget.get("used_tokens", 0) or 0),
-                "remaining_tokens": raw_budget.get("remaining_tokens"),
-                "input_tokens": int(raw_budget.get("input_tokens", 0) or 0),
-                "output_tokens": int(raw_budget.get("output_tokens", 0) or 0),
-                "reasoning_tokens": int(raw_budget.get("reasoning_tokens", 0) or 0),
-                "source": raw_budget.get("source", "estimated"),
-                "updated_at_ms": int(raw_budget.get("updated_at_ms", int(time.time() * 1000)) or 0),
-            }
+        update_context_budget_from_raw(context.context_budget, data.get("context_budget"))
         if "state" in data:
             context.state = SessionState(data["state"])
         if "created_at" in data:

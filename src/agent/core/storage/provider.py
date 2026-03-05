@@ -3,7 +3,33 @@ Storage Provider - 存储抽象接口
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional, TypedDict
+
+from agent.types import SerializedMessageData, SessionMetadataData
+
+
+class ArtifactMetadata(TypedDict, total=False):
+    artifact_ref: str
+    artifact_id: str
+    session_id: str
+    kind: str
+    size: int
+    path: str
+    created_at_ms: int
+    metadata: dict[str, Any]
+
+
+class ArtifactReadResult(TypedDict, total=False):
+    success: bool
+    error: str
+    artifact_ref: str
+    path: str
+    content: str
+    offset: int
+    limit: int
+    next_offset: int
+    eof: bool
+    size: int
 
 
 class StorageProvider(ABC):
@@ -20,7 +46,7 @@ class StorageProvider(ABC):
     """
 
     @abstractmethod
-    async def save_session(self, session_id: str, session_data: dict) -> None:
+    async def save_session(self, session_id: str, session_data: SessionMetadataData) -> None:
         """
         保存会话元数据（不包括消息列表）
 
@@ -38,7 +64,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def load_session(self, session_id: str) -> Optional[dict]:
+    async def load_session(self, session_id: str) -> SessionMetadataData | None:
         """
         加载会话元数据（不包括消息列表）
 
@@ -74,7 +100,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def list_sessions(self) -> List[str]:
+    async def list_sessions(self) -> list[str]:
         """
         列出所有会话 ID
 
@@ -84,7 +110,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def save_message(self, session_id: str, message_data: dict) -> None:
+    async def save_message(self, session_id: str, message_data: SerializedMessageData) -> None:
         """
         保存单条消息（增量保存）
 
@@ -95,7 +121,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def load_messages(self, session_id: str) -> List[dict]:
+    async def load_messages(self, session_id: str) -> list[SerializedMessageData]:
         """
         加载会话的所有消息
 
@@ -122,8 +148,8 @@ class StorageProvider(ABC):
         session_id: str,
         kind: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> ArtifactMetadata:
         """
         保存工具执行产生的大文本产物（artifact）。
 
@@ -136,7 +162,7 @@ class StorageProvider(ABC):
         artifact_ref: str,
         offset: int = 0,
         limit: int = 50000,
-    ) -> Dict[str, Any]:
+    ) -> ArtifactReadResult:
         """
         读取 artifact 内容（支持分段读取）。
 

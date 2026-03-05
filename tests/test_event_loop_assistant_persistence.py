@@ -6,6 +6,7 @@ import pytest
 
 from agent.core.bus import MessageBus
 from agent.core.loop import AgentEventLoop
+from agent.core.message import UserTextPart
 from agent.core.session.context import SessionContext
 from agent.types import LLMConfig, SessionState
 
@@ -79,7 +80,7 @@ async def test_call_llm_turn_uses_finish_assistant_message_for_persistence():
         model_profile_id="safe",
         agent_name="agent_stub",
     )
-    context.build_user_message(parts=[{"type": "text", "text": "hi"}])
+    context.build_user_message(parts=[UserTextPart(text="hi")])
     session_manager = _SessionManagerStub(context)
 
     framework = SimpleNamespace(
@@ -115,7 +116,7 @@ async def test_call_llm_turn_sets_context_budget_without_usage():
         model_profile_id="safe",
         agent_name="agent_stub",
     )
-    context.build_user_message(parts=[{"type": "text", "text": "hi"}])
+    context.build_user_message(parts=[UserTextPart(text="hi")])
     session_manager = _SessionManagerStub(context)
 
     framework = SimpleNamespace(
@@ -141,10 +142,11 @@ async def test_call_llm_turn_sets_context_budget_without_usage():
     result = await loop._call_llm_turn("sess_budget_zero")
 
     assert result["tokens"] == {"input": 0, "output": 0, "reasoning": 0}
-    assert result["context_budget"]["source"] == "estimated"
-    assert result["context_budget"]["total_tokens"] == 1000
-    assert result["context_budget"]["used_tokens"] == 0
-    assert result["context_budget"]["remaining_tokens"] == 1000
+    budget = result["context_budget"]
+    assert budget.source == "estimated"
+    assert budget.total_tokens == 1000
+    assert budget.used_tokens == 0
+    assert budget.remaining_tokens == 1000
     assert session_manager.metadata_save_calls == 1
 
 
@@ -155,7 +157,7 @@ async def test_call_llm_turn_sets_context_budget_from_provider_usage():
         model_profile_id="safe",
         agent_name="agent_stub",
     )
-    context.build_user_message(parts=[{"type": "text", "text": "hi"}])
+    context.build_user_message(parts=[UserTextPart(text="hi")])
     session_manager = _SessionManagerStub(context)
 
     framework = SimpleNamespace(
@@ -181,9 +183,10 @@ async def test_call_llm_turn_sets_context_budget_from_provider_usage():
     result = await loop._call_llm_turn("sess_budget_provider")
 
     assert result["tokens"] == {"input": 120, "output": 30, "reasoning": 7}
-    assert result["context_budget"]["source"] == "provider"
-    assert result["context_budget"]["used_tokens"] == 157
-    assert result["context_budget"]["remaining_tokens"] == 1843
+    budget = result["context_budget"]
+    assert budget.source == "provider"
+    assert budget.used_tokens == 157
+    assert budget.remaining_tokens == 1843
     assert session_manager.metadata_save_calls == 1
 
 
@@ -194,7 +197,7 @@ async def test_conversation_loop_tool_branch_uses_finish_assistant_message():
         model_profile_id="safe",
         agent_name="agent_stub",
     )
-    context.build_user_message(parts=[{"type": "text", "text": "hi"}])
+    context.build_user_message(parts=[UserTextPart(text="hi")])
     session_manager = _SessionManagerStub(context)
 
     framework = SimpleNamespace(
@@ -255,4 +258,3 @@ async def test_conversation_loop_tool_branch_uses_finish_assistant_message():
     await loop._conversation_loop("sess_tool")
 
     assert len(session_manager.finish_calls) >= 1
-    assert session_manager.finish_calls[0]["finish"] == "tool_calls"

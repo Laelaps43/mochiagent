@@ -11,10 +11,11 @@ from loguru import logger
 from .config import ToolRuntimeConfig
 from .core.mcp.manager import MCPManager
 from .core.tools import Tool, ToolRegistry, ToolExecutor, ToolSecurityConfig
+from .core.message import UserMessagePartInput
 from .common.skill import Skill
 from .common.tools import SkillTool
 from .context import AgentContext
-from .types import Event, UserPartInput
+from .types import Event
 from .session import Session
 
 if TYPE_CHECKING:
@@ -312,7 +313,7 @@ class BaseAgent(ABC):
     async def push_message(
         self,
         session_id: str,
-        message: Union[str, List[UserPartInput]],
+        message: Union[str, List[UserMessagePartInput]],
     ) -> None:
         """
         发送消息到会话

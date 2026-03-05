@@ -10,6 +10,7 @@ from .core.loop import AgentEventLoop
 from .core.session import SessionContext, SessionManager, SessionStateMachine
 from .core.storage import StorageProvider, MemoryStorage
 from .core.tools import Tool, ToolExecutor, ToolRegistry
+from .core.message import UserMessagePartInput, UserPartInput, UserReasoningPart, UserTextPart
 from .types import (
     Event,
     EventType,
@@ -21,9 +22,6 @@ from .types import (
     ToolCall,
     ToolDefinition,
     ToolResult,
-    UserPartInput,
-    TextPartInput,
-    ReasoningPartInput,
 )
 from .framework import AgentFramework, get_framework, reset_framework
 from .base_agent import BaseAgent
@@ -159,9 +157,10 @@ __all__ = [
     "ToolDefinition",
     "ToolResult",
     # User Input Types
+    "UserMessagePartInput",
     "UserPartInput",
-    "TextPartInput",
-    "ReasoningPartInput",
+    "UserTextPart",
+    "UserReasoningPart",
     # Public Config
     "ToolPolicyConfig",
     "ToolRuntimeConfig",

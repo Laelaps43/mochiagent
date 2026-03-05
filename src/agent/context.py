@@ -10,8 +10,9 @@ from typing import Union, List
 from loguru import logger
 
 from .core.bus import MessageBus
+from .core.message import UserMessagePartInput, UserTextPart
 from .core.session import SessionManager
-from .types import Event, EventType, UserPartInput
+from .types import Event, EventType
 
 
 @dataclass
@@ -54,7 +55,7 @@ class AgentContext:
     async def send_message(
         self,
         session_id: str,
-        message: Union[str, List[UserPartInput]],
+        message: Union[str, List[UserMessagePartInput]],
     ) -> None:
         """
         发送消息到会话并触发事件
@@ -65,7 +66,7 @@ class AgentContext:
         """
         # 转换消息格式
         if isinstance(message, str):
-            parts = [{"type": "text", "text": message}]
+            parts = [UserTextPart(text=message)]
         else:
             parts = message
 

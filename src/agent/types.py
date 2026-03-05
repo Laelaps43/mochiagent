@@ -6,7 +6,8 @@ Agent Framework Core Types
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
+import time
+from typing import Any, Dict, List, Literal, Optional
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
@@ -29,7 +30,6 @@ class Message(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None  # For tool responses
-
 
 class ToolCall(BaseModel):
     """工具调用"""
@@ -54,25 +54,73 @@ class ToolResult(BaseModel):
     truncated: bool = False
 
 
-# ============ User Input Part Types ============
+ContextBudgetSource = Literal["estimated", "provider"]
 
 
-class TextPartInput(TypedDict):
-    """文本 Part 输入"""
-
-    type: Literal["text"]
-    text: str
-
-
-class ReasoningPartInput(TypedDict):
-    """思考过程 Part 输入"""
-
-    type: Literal["reasoning"]
-    text: str
+class ContextBudgetData(TypedDict):
+    total_tokens: int | None
+    used_tokens: int
+    remaining_tokens: int | None
+    input_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+    source: ContextBudgetSource
+    updated_at_ms: int
 
 
-# 用户可以发送的 Part 类型（将来可扩展 ImagePartInput 等）
-UserPartInput = Union[TextPartInput, ReasoningPartInput]
+class SessionMetadataData(TypedDict):
+    session_id: str
+    state: str
+    model_profile_id: str
+    agent_name: str
+    metadata: dict[str, Any]
+    context_budget: ContextBudgetData
+    created_at: str
+    updated_at: str
+
+
+class SerializedMessageData(TypedDict):
+    info: dict[str, Any]
+    parts: list[dict[str, Any]]
+
+
+class SessionData(TypedDict):
+    session_id: str
+    state: str
+    model_profile_id: str
+    agent_name: str
+    metadata: dict[str, Any]
+    context_budget: ContextBudgetData
+    message_count: int
+    messages: list[SerializedMessageData]
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class ContextBudget:
+    """上下文窗口预算快照"""
+
+    total_tokens: int | None = None
+    used_tokens: int = 0
+    remaining_tokens: int | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    source: ContextBudgetSource = "estimated"
+    updated_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
+
+    def to_dict(self) -> ContextBudgetData:
+        return {
+            "total_tokens": self.total_tokens,
+            "used_tokens": self.used_tokens,
+            "remaining_tokens": self.remaining_tokens,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "source": self.source,
+            "updated_at_ms": self.updated_at_ms,
+        }
 
 
 class SessionState(str, Enum):

@@ -13,7 +13,7 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from agent.constants import OPENAI_MAX_RETRIES
-from agent.core.llm.base import LLMProvider
+from agent.core.llm.base import LLMMessageInput, LLMProvider
 from agent.core.llm.errors import (
     LLMProtocolError,
     LLMProviderError,
@@ -21,7 +21,7 @@ from agent.core.llm.errors import (
     LLMTransportError,
 )
 from agent.core.security import redact_text
-from agent.types import LLMConfig, ToolDefinition
+from agent.types import LLMConfig, Message as ChatMessage, ToolDefinition
 
 try:
     from openai import RateLimitError
@@ -67,17 +67,31 @@ class OpenAIAdapter(LLMProvider):
             for tool in tools
         ]
 
+    @staticmethod
+    def _normalize_messages(messages: list[LLMMessageInput]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for message in messages:
+            if isinstance(message, ChatMessage):
+                normalized.append(message.model_dump(exclude_none=True, mode="json"))
+                continue
+
+            raise TypeError(
+                f"Unsupported message type: {type(message).__name__}. "
+                "Expected agent.types.Message."
+            )
+        return normalized
+
     def _build_request_params(
         self,
         *,
-        messages: list[dict[str, Any]],
+        messages: list[LLMMessageInput],
         tools: list[ToolDefinition] | None,
         stream: bool,
         **kwargs: Any,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "model": self.config.model,
-            "messages": messages,
+            "messages": self._normalize_messages(messages),
             "stream": stream,
             "temperature": self.config.temperature,
         }
@@ -86,15 +100,10 @@ class OpenAIAdapter(LLMProvider):
         if tools:
             params["tools"] = self._prepare_tools(tools)
             params["tool_choice"] = "auto"
-        if stream:
-            stream_options = params.get("stream_options")
-            if isinstance(stream_options, dict):
-                stream_options.setdefault("include_usage", True)
-            elif stream_options is None:
-                params["stream_options"] = {"include_usage": True}
-
         params.update(self.config.extra_params)
         params.update(kwargs)
+        if stream:
+            params["stream_options"] = {"include_usage": True}
         return params
 
     @staticmethod
@@ -367,7 +376,7 @@ class OpenAIAdapter(LLMProvider):
 
     async def stream_chat(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[LLMMessageInput],
         tools: list[ToolDefinition] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
@@ -419,7 +428,7 @@ class OpenAIAdapter(LLMProvider):
 
     async def complete(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[LLMMessageInput],
         tools: list[ToolDefinition] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:

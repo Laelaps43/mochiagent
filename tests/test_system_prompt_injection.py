@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from agent.core.prompt import inject_system_prompt
+from agent.types import Message, MessageRole
 
 
 class _DummyAgent:
@@ -21,20 +22,21 @@ def _dummy_context():
 
 def test_inject_system_prompt_replaces_existing_system_messages():
     messages = [
-        {"role": "system", "content": "old-1"},
-        {"role": "user", "content": "hi"},
-        {"role": "system", "content": "old-2"},
+        Message(role=MessageRole.SYSTEM, content="old-1"),
+        Message(role=MessageRole.USER, content="hi"),
+        Message(role=MessageRole.SYSTEM, content="old-2"),
     ]
 
     out = inject_system_prompt(messages, "new-system")
 
-    assert out[0] == {"role": "system", "content": "new-system"}
-    assert [m["role"] for m in out].count("system") == 1
-    assert out[1:] == [{"role": "user", "content": "hi"}]
+    assert out[0].role == MessageRole.SYSTEM
+    assert out[0].content == "new-system"
+    assert [m.role for m in out].count(MessageRole.SYSTEM) == 1
+    assert out[1:] == [Message(role=MessageRole.USER, content="hi")]
 
 
 def test_inject_system_prompt_noop_when_agent_returns_empty():
     context = _dummy_context()
-    messages = [{"role": "user", "content": "hi"}]
+    messages = [Message(role=MessageRole.USER, content="hi")]
     out = inject_system_prompt(messages, _DummyAgent(None).get_system_prompt(context))
     assert out == messages

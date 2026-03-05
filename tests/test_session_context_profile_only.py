@@ -24,4 +24,4 @@ def test_session_context_from_dict_without_llm_config():
         }
     )
     assert context.model_profile_id == "safe"
-    assert context.context_budget["used_tokens"] == 0
+    assert context.context_budget.used_tokens == 0

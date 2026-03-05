@@ -3,7 +3,7 @@ Part Models - Part 数据模型定义
 """
 
 import time
-from typing import Any, Dict, Literal, Optional, Type, Union
+from typing import Any, Dict, Literal, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -52,6 +52,30 @@ class PartBase(BaseModel):
             None 或包含 type 和其他字段的字典
         """
         return None  # 默认不参与
+
+
+# ============ User Input Part Models ============
+
+
+class UserTextPart(BaseModel):
+    """用户输入文本 Part"""
+
+    type: Literal["text"] = "text"
+    text: str
+    synthetic: Optional[bool] = None
+    ignored: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class UserReasoningPart(BaseModel):
+    """用户输入思考 Part"""
+
+    type: Literal["reasoning"] = "reasoning"
+    text: str
+    metadata: Optional[Dict[str, Any]] = None
+
+
+UserPartInput = Union[UserTextPart, UserReasoningPart]
 
 
 # ============ TextPart - 文本内容 ============
@@ -441,52 +465,60 @@ class ToolPart(PartBase):
 # ============ Part Union Type ============
 
 Part = Union[TextPart, ReasoningPart, ToolPart]
+UserMessagePartInput = Union[UserPartInput, TextPart, ReasoningPart]
 
 
-# ============ Part Registry & Factory ============
-
-# Part 类型注册表（用于从字典创建 Part）
-PART_REGISTRY: Dict[str, Type[PartBase]] = {
-    "text": TextPart,
-    "reasoning": ReasoningPart,
-    # "tool" 不包含在注册表中，因为它不从用户输入创建
-    # 将来加图片时只需添加一行：
-    # "image": ImagePart,
-}
-
-
-def create_part_from_dict(
-    data: Dict[str, Any],
+def create_part_from_user_input(
+    data: UserMessagePartInput,
     session_id: str,
     message_id: str,
 ) -> Part:
-    """
-    Part 工厂函数 - 从字典创建 Part（多态）
+    """将用户输入 Part 转换为消息内 Part（补齐运行时字段）。"""
+    if isinstance(data, TextPart):
+        return TextPart.create_fast(
+            session_id=session_id,
+            message_id=message_id,
+            text=data.text,
+            synthetic=data.synthetic,
+            ignored=data.ignored,
+            metadata=data.metadata,
+        )
 
-    Args:
-        data: Part 数据字典，必须包含 "type" 字段
-        session_id: 会话 ID
-        message_id: 消息 ID
+    if isinstance(data, ReasoningPart):
+        now = int(time.time() * 1000)
+        start = data.time.start if data.time else now
+        end = data.time.end if data.time and data.time.end is not None else now
+        return ReasoningPart.create_fast(
+            session_id=session_id,
+            message_id=message_id,
+            text=data.text,
+            start=start,
+            end=end,
+            metadata=data.metadata,
+        )
 
-    Returns:
-        Part 实例
+    if isinstance(data, UserTextPart):
+        return TextPart.create_fast(
+            session_id=session_id,
+            message_id=message_id,
+            text=data.text,
+            synthetic=data.synthetic,
+            ignored=data.ignored,
+            metadata=data.metadata,
+        )
 
-    Raises:
-        ValueError: 未知的 part type
+    if isinstance(data, UserReasoningPart):
+        now = int(time.time() * 1000)
+        return ReasoningPart.create_fast(
+            session_id=session_id,
+            message_id=message_id,
+            text=data.text,
+            start=now,
+            end=now,
+            metadata=data.metadata,
+        )
 
-    Examples:
-        >>> part = create_part_from_dict(
-        ...     {"type": "text", "text": "hello"},
-        ...     session_id="xxx",
-        ...     message_id="yyy"
-        ... )
-    """
-    part_type = data.get("type")
-
-    # 从注册表获取 Part 类
-    part_class = PART_REGISTRY.get(part_type)
-    if not part_class:
-        raise ValueError(f"Unknown part type: {part_type}")
-
-    # 调用对应 Part 类的 from_dict 方法（多态）
-    return part_class.from_dict(data, session_id, message_id)
+    raise TypeError(
+        f"Unsupported user part input type: {type(data).__name__}. "
+        "Expected UserTextPart, UserReasoningPart, TextPart, or ReasoningPart."
+    )

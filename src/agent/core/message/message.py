@@ -5,6 +5,7 @@ Message Container - Message = Info + Parts
 from typing import Any, Dict, List
 from pydantic import BaseModel, Field
 
+from agent.types import Message as ChatMessage, SerializedMessageData
 from .info import MessageInfo, UserMessageInfo, AssistantMessageInfo
 from .part import Part
 
@@ -23,7 +24,7 @@ class Message(BaseModel):
         """添加 Part 到消息"""
         self.parts.append(part)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> SerializedMessageData:
         return {
             "info": self.info.model_dump(),
             "parts": [part.model_dump() for part in self.parts],
@@ -61,7 +62,7 @@ class Message(BaseModel):
     def role(self) -> str:
         return self.info.role
 
-    def to_llm_messages(self) -> List[Dict[str, Any]]:
+    def to_llm_messages(self) -> List[ChatMessage]:
         text_contents = []
         tool_calls = []
         tool_results = []
@@ -81,13 +82,13 @@ class Message(BaseModel):
         if not text_contents and not tool_calls:
             return []
 
-        messages = []
-        main_msg = {
+        messages: List[ChatMessage] = []
+        main_msg: Dict[str, Any] = {
             "role": self.info.role,
             "content": "".join(text_contents),
         }
         if self.info.role == "assistant" and tool_calls:
             main_msg["tool_calls"] = tool_calls
-        messages.append(main_msg)
-        messages.extend(tool_results)
+        messages.append(ChatMessage.model_validate(main_msg))
+        messages.extend(ChatMessage.model_validate(tool_result) for tool_result in tool_results)
         return messages

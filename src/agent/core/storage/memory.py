@@ -6,12 +6,18 @@ import json
 import shutil
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any
 from uuid import uuid4
 
 from loguru import logger
 
-from .provider import StorageProvider
+from .provider import (
+    ArtifactMetadata,
+    ArtifactReadResult,
+    SerializedMessageData,
+    SessionMetadataData,
+    StorageProvider,
+)
 
 
 class MemoryStorage(StorageProvider):
@@ -29,8 +35,8 @@ class MemoryStorage(StorageProvider):
     """
 
     def __init__(self, artifact_root: str | Path | None = None):
-        self._sessions: Dict[str, dict] = {}
-        self._messages: Dict[str, List[dict]] = {}
+        self._sessions: dict[str, SessionMetadataData] = {}
+        self._messages: dict[str, list[SerializedMessageData]] = {}
         self._artifact_root = (
             Path(artifact_root) if artifact_root else (Path.cwd() / ".agent" / "artifacts")
         )
@@ -42,11 +48,11 @@ class MemoryStorage(StorageProvider):
             "after restart."
         )
 
-    async def save_session(self, session_id: str, session_data: dict) -> None:
+    async def save_session(self, session_id: str, session_data: SessionMetadataData) -> None:
         self._sessions[session_id] = session_data
         logger.debug(f"Saved session metadata to memory: {session_id}")
 
-    async def load_session(self, session_id: str) -> Optional[dict]:
+    async def load_session(self, session_id: str) -> SessionMetadataData | None:
         data = self._sessions.get(session_id)
         if data:
             logger.debug(f"Loaded session metadata from memory: {session_id}")
@@ -64,10 +70,10 @@ class MemoryStorage(StorageProvider):
     async def session_exists(self, session_id: str) -> bool:
         return session_id in self._sessions
 
-    async def list_sessions(self) -> List[str]:
+    async def list_sessions(self) -> list[str]:
         return list(self._sessions.keys())
 
-    async def save_message(self, session_id: str, message_data: dict) -> None:
+    async def save_message(self, session_id: str, message_data: SerializedMessageData) -> None:
         if session_id not in self._messages:
             self._messages[session_id] = []
         self._messages[session_id].append(message_data)
@@ -76,7 +82,7 @@ class MemoryStorage(StorageProvider):
             f"total messages: {len(self._messages[session_id])}"
         )
 
-    async def load_messages(self, session_id: str) -> List[dict]:
+    async def load_messages(self, session_id: str) -> list[SerializedMessageData]:
         messages = self._messages.get(session_id, [])
         logger.debug(f"Loaded {len(messages)} messages from memory: {session_id}")
         return messages
@@ -91,8 +97,8 @@ class MemoryStorage(StorageProvider):
         session_id: str,
         kind: str,
         content: str,
-        metadata: Optional[dict] = None,
-    ) -> dict:
+        metadata: dict[str, Any] | None = None,
+    ) -> ArtifactMetadata:
         session_dir = self._artifact_root / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -102,7 +108,7 @@ class MemoryStorage(StorageProvider):
 
         content_path.write_text(content, encoding="utf-8")
         artifact_ref = f"artifact://{session_id}/{artifact_id}"
-        artifact_meta = {
+        artifact_meta: ArtifactMetadata = {
             "artifact_ref": artifact_ref,
             "artifact_id": artifact_id,
             "session_id": session_id,
@@ -125,7 +131,7 @@ class MemoryStorage(StorageProvider):
         artifact_ref: str,
         offset: int = 0,
         limit: int = 50000,
-    ) -> dict:
+    ) -> ArtifactReadResult:
         session_id, artifact_id = self._parse_artifact_ref(artifact_ref)
         content_path = self._artifact_root / session_id / f"{artifact_id}.txt"
 

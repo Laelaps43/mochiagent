@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from loguru import logger
 
 from agent.core.bus import MessageBus
-from agent.core.message import Message, Part  # 移到顶层避免循环导入
+from agent.core.message import Message, Part, UserMessagePartInput  # 移到顶层避免循环导入
 from agent.types import Event, EventType, SessionState
 from agent.core.storage import StorageProvider, MemoryStorage
 from .context import SessionContext
@@ -305,7 +305,7 @@ class SessionManager:
 
         logger.info(f"Deleted session: {session_id}")
 
-    async def add_user_message(self, session_id: str, parts: list[dict]) -> Message:
+    async def add_user_message(self, session_id: str, parts: list[UserMessagePartInput]) -> Message:
         """添加用户消息并自动保存"""
         context = await self.get_session(session_id)
         message = context.build_user_message(parts)
@@ -383,10 +383,6 @@ class SessionManager:
         )
 
         logger.info(f"Session {session_id} agent switched: {old_agent} -> {agent_name}")
-
-    async def list_sessions(self) -> list[str]:
-        """列出所有会话ID"""
-        return await self.storage.list_sessions()
 
     async def update_state(self, session_id: str, new_state: SessionState) -> None:
         """更新会话状态"""
