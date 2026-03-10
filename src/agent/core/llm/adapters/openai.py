@@ -5,9 +5,11 @@ OpenAI Compatible Adapter - 使用OpenAI SDK支持OpenAI兼容的厂商
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from typing import Any, AsyncIterator
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, NoReturn
 
 from loguru import logger
 from openai import AsyncOpenAI
@@ -21,7 +23,7 @@ from agent.core.llm.errors import (
     LLMTransportError,
 )
 from agent.core.security import redact_text
-from agent.types import LLMConfig, Message as ChatMessage, ToolDefinition
+from agent.types import LLMConfig, LLMStreamChunk, Message as ChatMessage, ToolCallPayload, ToolDefinition
 
 try:
     from openai import RateLimitError
@@ -29,6 +31,16 @@ except Exception:  # pragma: no cover
 
     class RateLimitError(Exception):
         pass
+
+
+@dataclass(slots=True)
+class _ResponseMeta:
+    status_code: int | None = None
+    content_type: str | None = None
+    x_log_id: str | None = None
+    provider_code: str | None = None
+    provider_message: str | None = None
+    response_body: str | None = None
 
 
 class OpenAIAdapter(LLMProvider):
@@ -88,7 +100,7 @@ class OpenAIAdapter(LLMProvider):
         tools: list[ToolDefinition] | None,
         stream: bool,
         **kwargs: Any,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         params: dict[str, Any] = {
             "model": self.config.model,
             "messages": self._normalize_messages(messages),
@@ -107,31 +119,24 @@ class OpenAIAdapter(LLMProvider):
         return params
 
     @staticmethod
-    def _extract_response_meta(exc: Exception) -> dict[str, Any]:
-        meta: dict[str, Any] = {
-            "status_code": None,
-            "content_type": None,
-            "x_log_id": None,
-            "provider_code": None,
-            "provider_message": None,
-            "response_body": None,
-        }
+    def _extract_response_meta(exc: Exception) -> _ResponseMeta:
+        meta = _ResponseMeta()
 
-        response = getattr(exc, "response", None)
+        response = exc.response if hasattr(exc, "response") else None
         if response is None:
             return meta
 
         try:
-            meta["status_code"] = getattr(response, "status_code", None)
-            headers = getattr(response, "headers", {})
-            meta["content_type"] = headers.get("content-type", "")
-            meta["x_log_id"] = headers.get("x-log-id", "")
+            meta.status_code = response.status_code if hasattr(response, "status_code") else None
+            headers = response.headers if hasattr(response, "headers") else {}
+            meta.content_type = headers.get("content-type", "")
+            meta.x_log_id = headers.get("x-log-id", "")
 
-            body_text = getattr(response, "text", "") or ""
+            body_text = (response.text if hasattr(response, "text") else "") or ""
             if body_text:
                 if len(body_text) > 1200:
                     body_text = body_text[:1200] + "...(truncated)"
-                meta["response_body"] = body_text
+                meta.response_body = body_text
 
                 try:
                     payload = json.loads(body_text)
@@ -139,9 +144,9 @@ class OpenAIAdapter(LLMProvider):
                         error_obj = payload.get("error")
                         if isinstance(error_obj, dict):
                             if error_obj.get("code") is not None:
-                                meta["provider_code"] = str(error_obj.get("code"))
+                                meta.provider_code = str(error_obj.get("code"))
                             if error_obj.get("message"):
-                                meta["provider_message"] = redact_text(error_obj.get("message"))
+                                meta.provider_message = redact_text(error_obj.get("message"))
                 except Exception:
                     pass
         except Exception:
@@ -190,10 +195,10 @@ class OpenAIAdapter(LLMProvider):
             )
 
         meta = self._extract_response_meta(exc)
-        status_code = meta["status_code"]
-        provider_code = meta["provider_code"]
-        provider_message = meta["provider_message"]
-        x_log_id = meta["x_log_id"]
+        status_code = meta.status_code
+        provider_code = meta.provider_code
+        provider_message = meta.provider_message
+        x_log_id = meta.x_log_id
 
         if isinstance(exc, RateLimitError) or status_code == 429 or provider_code == "1302":
             detail = provider_message or redact_text(str(exc))
@@ -269,11 +274,11 @@ class OpenAIAdapter(LLMProvider):
             redact_text(repr(exc)),
         )
 
-        response = getattr(exc, "response", None)
+        response = exc.response if hasattr(exc, "response") else None
         if response is not None:
             try:
                 content_type = response.headers.get("content-type", "")
-                body_text = getattr(response, "text", "") or ""
+                body_text = (response.text if hasattr(response, "text") else "") or ""
                 if len(body_text) > 1200:
                     body_text = body_text[:1200] + "...(truncated)"
                 logger.error(
@@ -285,7 +290,7 @@ class OpenAIAdapter(LLMProvider):
             except Exception:
                 pass
 
-    def _raise_mapped_error(self, operation: str, exc: Exception) -> None:
+    def _raise_mapped_error(self, operation: str, exc: Exception) -> NoReturn:
         provider_error = self._map_provider_exception(operation, exc)
         self._log_provider_exception(f"{operation}.error", provider_error, exc)
         raise provider_error from exc
@@ -293,7 +298,7 @@ class OpenAIAdapter(LLMProvider):
     @staticmethod
     def _merge_tool_call_delta(
         tool_call: Any,
-        accumulated_tool_calls: dict[int, dict[str, Any]],
+        accumulated_tool_calls: dict[int, ToolCallPayload],
     ) -> None:
         idx = tool_call.index if tool_call.index is not None else len(accumulated_tool_calls)
         if idx not in accumulated_tool_calls:
@@ -320,13 +325,13 @@ class OpenAIAdapter(LLMProvider):
     @staticmethod
     def _parse_stream_chunk(
         chunk: Any,
-        accumulated_tool_calls: dict[int, dict[str, Any]],
-    ) -> dict[str, Any] | None:
+        accumulated_tool_calls: dict[int, ToolCallPayload],
+    ) -> LLMStreamChunk | None:
         choice = chunk.choices[0] if chunk.choices else None
         if not choice:
             return None
 
-        result: dict[str, Any] = {}
+        result: LLMStreamChunk = {}
         delta = choice.delta
 
         if delta and delta.content:
@@ -341,7 +346,7 @@ class OpenAIAdapter(LLMProvider):
             if accumulated_tool_calls:
                 ordered_calls = [accumulated_tool_calls[k] for k in sorted(accumulated_tool_calls)]
                 result["tool_calls"] = ordered_calls
-        usage = getattr(chunk, "usage", None)
+        usage = chunk.usage if hasattr(chunk, "usage") else None
         if usage is not None:
             if hasattr(usage, "model_dump"):
                 result["usage"] = usage.model_dump(exclude_none=True)
@@ -351,10 +356,10 @@ class OpenAIAdapter(LLMProvider):
         return result or None
 
     @staticmethod
-    def _parse_complete_response(response: Any) -> dict[str, Any]:
+    def _parse_complete_response(response: Any) -> LLMStreamChunk:
         choice = response.choices[0]
         message = choice.message
-        result: dict[str, Any] = {
+        result: LLMStreamChunk = {
             "content": message.content or "",
             "finish_reason": choice.finish_reason,
         }
@@ -379,7 +384,7 @@ class OpenAIAdapter(LLMProvider):
         messages: list[LLMMessageInput],
         tools: list[ToolDefinition] | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncIterator[LLMStreamChunk]:
         params = self._build_request_params(
             messages=messages,
             tools=tools,
@@ -401,7 +406,7 @@ class OpenAIAdapter(LLMProvider):
 
             first_chunk_time = None
             chunk_count = 0
-            accumulated_tool_calls: dict[int, dict[str, Any]] = {}
+            accumulated_tool_calls: dict[int, ToolCallPayload] = {}
 
             async for chunk in response:
                 if first_chunk_time is None:
@@ -423,6 +428,8 @@ class OpenAIAdapter(LLMProvider):
                         )
                     yield result
 
+        except (asyncio.CancelledError, GeneratorExit):
+            raise
         except Exception as exc:
             self._raise_mapped_error("stream_chat", exc)
 
@@ -431,7 +438,7 @@ class OpenAIAdapter(LLMProvider):
         messages: list[LLMMessageInput],
         tools: list[ToolDefinition] | None = None,
         **kwargs: Any,
-    ) -> dict[str, Any]:
+    ) -> LLMStreamChunk:
         params = self._build_request_params(
             messages=messages,
             tools=tools,
@@ -442,5 +449,7 @@ class OpenAIAdapter(LLMProvider):
         try:
             response = await self.client.chat.completions.create(**params)
             return self._parse_complete_response(response)
+        except (asyncio.CancelledError, GeneratorExit):
+            raise
         except Exception as exc:
             self._raise_mapped_error("complete", exc)

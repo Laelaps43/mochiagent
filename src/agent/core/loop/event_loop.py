@@ -14,13 +14,11 @@ from loguru import logger
 
 from agent.core.bus import MessageBus
 from agent.core.llm import AdapterRegistry
-from agent.core.llm.errors import LLMProviderError
+from agent.core.loop.llm_turn_handler import LLMTurnHandler
 from agent.core.message import ToolPart
+from agent.core.runtime import StrategyKind
 from agent.core.session import SessionManager
-from agent.core.tools import ToolResultPostProcessor
-from agent.types import ContextBudget, Event, EventType, SessionState
-
-from .llm_turn import run_llm_turn
+from agent.types import Event, EventType, SessionState
 
 if TYPE_CHECKING:
     from agent.framework import AgentFramework
@@ -49,7 +47,12 @@ class AgentEventLoop:
         self.adapter_registry = adapter_registry
         self.framework = framework
         self.max_iterations = max(1, max_iterations)
-        self.tool_result_postprocessor = ToolResultPostProcessor()
+        self._llm_turn_handler = LLMTurnHandler(
+            session_manager=session_manager,
+            adapter_registry=adapter_registry,
+            framework=framework,
+            emit_event=self._emit_event,
+        )
 
         self.bus.subscribe(EventType.MESSAGE_RECEIVED, self._handle_user_message)
         logger.info(
@@ -99,44 +102,11 @@ class AgentEventLoop:
                     "message_id": message_id,
                     "cost": 0.0,
                     "tokens": {},
-                    "context_budget": (await self._current_context_budget(session_id)).to_dict(),
+                    "context_budget": (await self._llm_turn_handler.current_context_budget(session_id)).to_dict(),
                     "finish": "error",
                 },
             )
         )
-
-    @staticmethod
-    def _extract_provider_error(exc: Exception) -> LLMProviderError | None:
-        current: BaseException | None = exc
-        while current:
-            if isinstance(current, LLMProviderError):
-                return current
-            current = current.__cause__
-        return None
-
-    @classmethod
-    def _resolve_error_payload(
-        cls,
-        exc: Exception,
-    ) -> tuple[str, str | None, str | None]:
-        provider_error = cls._extract_provider_error(exc)
-        if provider_error:
-            return provider_error.message, provider_error.code, provider_error.hint
-        return f"{type(exc).__name__}: {exc}", None, None
-
-    async def _persist_session_metadata(self, session_id: str) -> None:
-        await self.session_manager.save_session_metadata(session_id)
-
-    async def _current_context_budget(self, session_id: str) -> ContextBudget:
-        try:
-            context = await self.session_manager.get_session(session_id)
-        except Exception:
-            return ContextBudget()
-
-        budget = context.context_budget
-        if budget is None:
-            return ContextBudget()
-        return budget
 
     async def _handle_user_message(self, event: Event) -> None:
         session_id = event.session_id
@@ -162,7 +132,7 @@ class AgentEventLoop:
             )
 
         except Exception as exc:
-            error_message, code, hint = self._resolve_error_payload(exc)
+            error_message, code, hint = LLMTurnHandler.resolve_error_payload(exc)
             logger.exception(
                 "Error handling user message for session {}: {}",
                 session_id,
@@ -185,19 +155,19 @@ class AgentEventLoop:
             iteration_count = 0
             while iteration_count < self.max_iterations:
                 iteration_count += 1
-                result = await self._call_llm_turn(session_id)
+                result = await self._llm_turn_handler.run(session_id)
 
-                if result.get("tool_calls") and result.get("finish_reason") == "tool_calls":
-                    tool_calls = result["tool_calls"]
+                if result.tool_calls and result.finish_reason == "tool_calls":
+                    tool_calls = result.tool_calls
                     logger.info("LLM requested {} tool calls", len(tool_calls))
 
                     await self.session_manager.update_state(session_id, SessionState.WAITING_TOOL)
                     await self._execute_tools(session_id, tool_calls)
                     await self.session_manager.finish_assistant_message(
                         session_id=session_id,
-                        cost=result.get("cost", 0.0),
-                        tokens=result.get("tokens", {}),
-                        finish=result.get("finish_reason", "tool_calls"),
+                        cost=result.cost,
+                        tokens=result.tokens,
+                        finish=result.finish_reason or "tool_calls",
                     )
                     await self.session_manager.update_state(session_id, SessionState.PROCESSING)
                     continue
@@ -205,25 +175,25 @@ class AgentEventLoop:
                 logger.info(
                     "Conversation completed for session {} (finish_reason={})",
                     session_id,
-                    result.get("finish_reason"),
+                    result.finish_reason,
                 )
 
-                result_budget = result.get("context_budget")
-                if isinstance(result_budget, ContextBudget):
-                    context_budget_payload = result_budget.to_dict()
-                else:
-                    context_budget_payload = (await self._current_context_budget(session_id)).to_dict()
+                context_budget_payload = result.context_budget.to_dict()
 
                 await self._emit_event(
                     Event(
                         type=EventType.MESSAGE_DONE,
                         session_id=session_id,
                         data={
-                            "message_id": result.get("message_id"),
-                            "cost": result.get("cost", 0.0),
-                            "tokens": result.get("tokens", {}),
+                            "message_id": result.message_id,
+                            "cost": result.cost,
+                            "tokens": result.tokens,
                             "context_budget": context_budget_payload,
-                            "finish": result.get("finish_reason", "stop"),
+                            "context_compaction": result.context_compaction.to_dict(),
+                            "context_compaction_events": [
+                                item.to_dict() for item in result.context_compaction_events
+                            ],
+                            "finish": result.finish_reason or "stop",
                         },
                     )
                 )
@@ -257,7 +227,7 @@ class AgentEventLoop:
                         "message_id": (context.current_message.message_id if context.current_message else None),
                         "cost": 0.0,
                         "tokens": {},
-                        "context_budget": (await self._current_context_budget(session_id)).to_dict(),
+                        "context_budget": (await self._llm_turn_handler.current_context_budget(session_id)).to_dict(),
                         "finish": "max_iterations_exceeded",
                     },
                 )
@@ -270,9 +240,6 @@ class AgentEventLoop:
         finally:
             await self.session_manager.update_state(session_id, SessionState.IDLE)
 
-    async def _call_llm_turn(self, session_id: str) -> dict:
-        return await run_llm_turn(self, session_id)
-
     async def _execute_tools(self, session_id: str, tool_calls: list) -> list:
         context = await self.session_manager.get_session(session_id)
         message_id = context.current_message.message_id if context.current_message else None
@@ -283,8 +250,10 @@ class AgentEventLoop:
 
         agent = self.framework.get_agent(context.agent_name)
         if not agent:
-            logger.error("Agent '{}' not found", context.agent_name)
-            return []
+            raise RuntimeError(
+                f"Agent '{context.agent_name}' not found. "
+                "Cannot execute tool calls without a registered agent."
+            )
 
         tool_parts_map: dict[str, ToolPart] = {}
         for tool_call in tool_calls:
@@ -301,7 +270,7 @@ class AgentEventLoop:
             )
 
         results = await agent.tool_executor.execute_batch(tool_calls)
-        tool_args_by_call_id: dict[str, dict] = {}
+        tool_args_by_call_id: dict[str, dict[str, object]] = {}
         for tool_call in tool_calls:
             function_info = tool_call.get("function", {})
             call_id = tool_call.get("id", "")
@@ -319,7 +288,9 @@ class AgentEventLoop:
 
             original_part = tool_parts_map[call_id]
             if result.success:
-                processed_result = await self.tool_result_postprocessor.process(
+                processed_result = await self.framework.strategy_manager.run(
+                    StrategyKind.TOOL_RESULT_POSTPROCESS,
+                    agent_name=context.agent_name,
                     session_id=session_id,
                     tool_result=result,
                     tool_arguments=tool_args_by_call_id.get(call_id, {}),

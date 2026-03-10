@@ -4,7 +4,7 @@ import json
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union, List, Optional
+from typing import TYPE_CHECKING, Union, List, Optional
 
 from loguru import logger
 
@@ -19,6 +19,7 @@ from .types import Event
 from .session import Session
 
 if TYPE_CHECKING:
+    from .core.mcp.types import MCPServerSnapshot
     from .core.session import SessionContext
 
 
@@ -203,7 +204,7 @@ class BaseAgent(ABC):
                 manager.snapshot(),
             )
 
-    def get_mcp_status(self) -> dict[str, dict[str, Any]]:
+    def get_mcp_status(self) -> dict[str, "MCPServerSnapshot"]:
         """
         返回当前 Agent 维护的 MCP 服务状态快照。
 

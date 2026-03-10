@@ -3,7 +3,7 @@ Part Models - Part 数据模型定义
 """
 
 import time
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Any, Dict, Literal, Optional, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -228,7 +228,7 @@ class ToolStateRunning(BaseModel):
     input: Dict[str, Any]
     title: Optional[str] = None
     metadata: Optional[Any] = None
-    time: Dict[str, int]  # {"start": timestamp}
+    time: TimeInfo
 
 
 class ToolStateCompleted(BaseModel):
@@ -244,7 +244,7 @@ class ToolStateCompleted(BaseModel):
     truncated: bool = False
     title: str
     metadata: Any
-    time: Dict[str, int]  # {"start": timestamp, "end": timestamp}
+    time: TimeInfo
 
 
 class ToolStateError(BaseModel):
@@ -254,7 +254,7 @@ class ToolStateError(BaseModel):
     input: Dict[str, Any]
     error: str
     metadata: Optional[Any] = None
-    time: Dict[str, int]  # {"start": timestamp, "end": timestamp}
+    time: TimeInfo
 
 
 ToolState = Union[ToolStatePending, ToolStateRunning, ToolStateCompleted, ToolStateError]
@@ -299,7 +299,7 @@ class ToolPart(PartBase):
                 input={"arguments": arguments},
                 title=tool_name,
                 metadata=None,
-                time={"start": int(time.time() * 1000)},
+                time=TimeInfo.model_construct(start=int(time.time() * 1000), end=None),
             ),
             metadata=None,
         )
@@ -354,10 +354,10 @@ class ToolPart(PartBase):
                     "raw_size_chars": result.raw_size_chars,
                     "truncated": result.truncated,
                 },
-                time={
-                    "start": self.state.time["start"],
-                    "end": int(time.time() * 1000),
-                },
+                time=TimeInfo.model_construct(
+                    start=self.state.time.start,
+                    end=int(time.time() * 1000),
+                ),
             ),
             metadata=self.metadata,
         )
@@ -390,23 +390,12 @@ class ToolPart(PartBase):
                     "error": result.error,
                     "success": result.success,
                 },
-                time={
-                    "start": self.state.time["start"],
-                    "end": int(time.time() * 1000),
-                },
+                time=TimeInfo.model_construct(
+                    start=self.state.time.start,
+                    end=int(time.time() * 1000),
+                ),
             ),
             metadata=self.metadata,
-        )
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any], session_id: str, message_id: str) -> "ToolPart":
-        """
-        从字典创建 ToolPart
-
-        注意：ToolPart 通常由系统创建，不从用户输入创建
-        """
-        raise NotImplementedError(
-            "ToolPart should be created programmatically, not from user input"
         )
 
     def to_llm_format(self) -> Optional[Dict[str, Any]]:
@@ -439,8 +428,8 @@ class ToolPart(PartBase):
                 "tool_call_id": self.call_id,
             }
         elif self.state.status == "error":
-            # 使用 getattr 安全访问，防止类型检查问题
-            error_msg = getattr(self.state, "error", "Unknown error")
+            error_state = cast(ToolStateError, self.state)
+            error_msg = error_state.error or "Unknown error"
             result["tool_result"] = {
                 "role": "tool",
                 "content": f"Error: {error_msg}",

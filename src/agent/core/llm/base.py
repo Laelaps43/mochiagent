@@ -4,9 +4,9 @@ LLM Provider Base - LLM提供商基类
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, List, Optional
 
-from agent.types import LLMConfig, Message as ChatMessage, ToolDefinition
+from agent.types import LLMConfig, LLMStreamChunk, Message as ChatMessage, ToolDefinition
 
 LLMMessageInput = ChatMessage
 
@@ -26,7 +26,7 @@ class LLMProvider(ABC):
         messages: List[LLMMessageInput],
         tools: Optional[List[ToolDefinition]] = None,
         **kwargs: Any,
-    ) -> AsyncIterator[Dict[str, Any]]:
+    ) -> AsyncIterator[LLMStreamChunk]:
         """
         流式对话
 
@@ -49,7 +49,7 @@ class LLMProvider(ABC):
         messages: List[LLMMessageInput],
         tools: Optional[List[ToolDefinition]] = None,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> LLMStreamChunk:
         """
         非流式对话
 

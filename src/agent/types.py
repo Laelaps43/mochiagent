@@ -4,7 +4,7 @@ Agent Framework Core Types
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 import time
 from typing import Any, Dict, List, Literal, Optional
@@ -22,21 +22,25 @@ class MessageRole(str, Enum):
     TOOL = "tool"
 
 
+class ToolFunctionPayload(TypedDict):
+    name: str
+    arguments: str
+
+
+class ToolCallPayload(TypedDict):
+    id: str
+    type: Literal["function"]
+    function: ToolFunctionPayload
+
+
 class Message(BaseModel):
     """标准消息格式"""
 
     role: MessageRole
     content: str
-    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_calls: Optional[List[ToolCallPayload]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None  # For tool responses
-
-class ToolCall(BaseModel):
-    """工具调用"""
-
-    id: str
-    type: str = "function"
-    function: Dict[str, Any]  # {"name": "tool_name", "arguments": "json_string"}
 
 
 class ToolResult(BaseModel):
@@ -123,6 +127,29 @@ class ContextBudget:
         }
 
 
+class TokenUsage(TypedDict):
+    input: int
+    output: int
+    reasoning: int
+
+
+
+class LLMStreamChunk(TypedDict, total=False):
+    content: str
+    thinking: str
+    tool_calls: List[ToolCallPayload]
+    finish_reason: str
+    usage: Dict[str, Any]
+
+
+class LLMMessage(TypedDict, total=False):
+    role: str
+    content: str
+    tool_calls: List[ToolCallPayload]
+    tool_call_id: str
+    name: str
+
+
 class SessionState(str, Enum):
     """会话状态"""
 
@@ -150,6 +177,7 @@ class EventType(str, Enum):
 
     # 错误事件
     LLM_ERROR = "llm.error"
+    LLM_THINKING = "llm.thinking"
 
 
 @dataclass(slots=True)
@@ -159,7 +187,7 @@ class Event:
     type: EventType
     session_id: str
     data: Dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -195,5 +223,5 @@ class StreamChunk(BaseModel):
     session_id: str
     content: str
     finish_reason: Optional[str] = None
-    tool_calls: Optional[List[ToolCall]] = None
+    tool_calls: Optional[List[ToolCallPayload]] = None
     is_final: bool = False

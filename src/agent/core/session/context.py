@@ -3,7 +3,7 @@ Session Context - 会话上下文管理
 """
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -62,8 +62,8 @@ class SessionContext:
         self.context_budget: ContextBudget = ContextBudget()
         self.messages: List[Message] = []
         self.current_message: Optional[Message] = None
-        self.created_at = datetime.now()
-        self.updated_at = datetime.now()
+        self.created_at = datetime.now(tz=timezone.utc)
+        self.updated_at = datetime.now(tz=timezone.utc)
 
     def build_user_message(self, parts: List[UserMessagePartInput]) -> Message:
         message_id = f"msg_{uuid4().hex[:UUID_PREFIX_LENGTH]}"
@@ -80,7 +80,7 @@ class SessionContext:
             ],
         )
         self.messages.append(message)
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(tz=timezone.utc)
         return message
 
     def build_assistant_message(
@@ -105,13 +105,13 @@ class SessionContext:
         )
         self.messages.append(message)
         self.current_message = message
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(tz=timezone.utc)
         return message
 
     def add_part_to_current(self, part: Part) -> None:
         if self.current_message:
             self.current_message.add_part(part)
-            self.updated_at = datetime.now()
+            self.updated_at = datetime.now(tz=timezone.utc)
 
     def finish_current_message(
         self,
@@ -125,22 +125,22 @@ class SessionContext:
             self.current_message.info.tokens = tokens or {}
             self.current_message.info.finish = finish
             self.current_message = None
-            self.updated_at = datetime.now()
+            self.updated_at = datetime.now(tz=timezone.utc)
 
     def update_state(self, new_state: SessionState) -> None:
         self.state = new_state
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(tz=timezone.utc)
 
     def switch_agent(self, new_agent_name: str) -> None:
         old_agent = self.agent_name
         self.agent_name = new_agent_name
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(tz=timezone.utc)
         logger.info(f"Session {self.session_id} switched agent: {old_agent} -> {new_agent_name}")
 
     def update_model_profile(self, model_profile_id: Optional[str]) -> None:
         """更新会话绑定的模型 profile。"""
         self.model_profile_id = model_profile_id
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(tz=timezone.utc)
 
     def update_context_budget(
         self,
@@ -159,7 +159,7 @@ class SessionContext:
             reasoning_tokens=reasoning_tokens,
             source=source,
         )
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(tz=timezone.utc)
         return self.context_budget
 
     def get_llm_messages(self) -> List[ChatMessage]:

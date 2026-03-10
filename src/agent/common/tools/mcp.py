@@ -67,14 +67,16 @@ class MCPToolWrapper(Tool):
             return f"MCP tool call failed: {exc}"
 
         parts: list[str] = []
-        for block in getattr(result, "content", []) or []:
-            text = getattr(block, "text", None)
+        content_blocks = result.content if hasattr(result, "content") else []
+        for block in content_blocks or []:
+            text = block.text if hasattr(block, "text") else None
             if isinstance(text, str) and text:
                 parts.append(text)
             else:
                 parts.append(str(block))
 
-        if not parts and getattr(result, "structuredContent", None) is not None:
+        structured_content = result.structuredContent if hasattr(result, "structuredContent") else None
+        if not parts and structured_content is not None:
             parts.append(str(result.structuredContent))
 
         return "\n".join(parts).strip() or "(no output)"

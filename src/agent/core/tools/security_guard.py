@@ -11,7 +11,7 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class ToolSecurityGuard:
         self.restrict = restrict
         self.config = config
 
-    def validate_tool_call(self, tool: Any, arguments: dict[str, Any]) -> SecurityDecision:
+    def validate_tool_call(self, tool: Any, arguments: Mapping[str, Any]) -> SecurityDecision:
         schema = getattr(tool, "parameters_schema", {}) or {}
         properties = schema.get("properties", {}) or {}
 
@@ -73,18 +73,23 @@ class ToolSecurityGuard:
     def _validate_shell_command(
         self,
         command: str,
-        arguments: dict[str, Any],
+        arguments: Mapping[str, Any],
     ) -> SecurityDecision:
         if not self.config.enforce_command_guard:
             return SecurityDecision(allowed=True, reason="command guard disabled")
 
         deny_tokens = self.config.command_deny_tokens or set()
-        for token in deny_tokens:
-            if token in command:
-                return SecurityDecision(
-                    allowed=False,
-                    reason=f"command contains denied token: {token!r}",
-                )
+        if deny_tokens:
+            try:
+                cmd_tokens = shlex.split(command, posix=True)
+            except ValueError:
+                cmd_tokens = command.split()
+            for deny_token in deny_tokens:
+                if deny_token in cmd_tokens:
+                    return SecurityDecision(
+                        allowed=False,
+                        reason=f"command contains denied token: {deny_token!r}",
+                    )
 
         if not self.restrict or not self.config.enforce_workspace:
             return SecurityDecision(allowed=True, reason="workspace guard disabled")

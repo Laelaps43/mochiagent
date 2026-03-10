@@ -5,10 +5,13 @@ from types import SimpleNamespace
 import pytest
 
 from agent.core.bus import MessageBus
+from agent.core.compression import CompactionPayload
 from agent.core.loop import AgentEventLoop
 from agent.core.message import UserTextPart
+from agent.core.loop.turn_result import LLMTurnResult
+from agent.core.runtime import StrategyKind
 from agent.core.session.context import SessionContext
-from agent.types import LLMConfig, SessionState
+from agent.types import ContextBudget, EventType, LLMConfig, SessionState
 
 
 class _SessionManagerStub:
@@ -17,6 +20,7 @@ class _SessionManagerStub:
         self.finish_calls: list[dict] = []
         self.states: list[SessionState] = []
         self.metadata_save_calls = 0
+        self.emitted_events = []
 
     async def get_session(self, session_id: str) -> SessionContext:
         return self._context
@@ -39,6 +43,7 @@ class _SessionManagerStub:
         self._context.finish_current_message(cost=cost, tokens=tokens, finish=finish)
 
     async def emit_to_session_listeners(self, session_id: str, event) -> None:
+        self.emitted_events.append(event)
         return None
 
     async def update_state(self, session_id: str, new_state: SessionState) -> None:
@@ -68,9 +73,22 @@ class _LLMNoToolWithUsageStub:
         }
 
 
+class _LLMThinkingStub:
+    async def stream_chat(self, messages, tools=None):
+        yield {"thinking": "step-1"}
+        yield {"thinking": " step-2"}
+        yield {"content": "hello"}
+        yield {"finish_reason": "stop"}
+
+
 class _AdapterRegistryStub:
     def get(self, config):
         return _LLMNoToolStub()
+
+
+async def _noop_compaction(kind, **_kwargs):
+    assert kind == StrategyKind.CONTEXT_COMPACTION
+    return CompactionPayload.invalid(stage="pre_call", reason="skip", name="noop")
 
 
 @pytest.mark.asyncio
@@ -93,6 +111,7 @@ async def test_call_llm_turn_uses_finish_assistant_message_for_persistence():
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
         ),
+        strategy_manager=SimpleNamespace(run=_noop_compaction),
     )
 
     loop = AgentEventLoop(
@@ -102,9 +121,9 @@ async def test_call_llm_turn_uses_finish_assistant_message_for_persistence():
         framework=framework,
     )
 
-    result = await loop._call_llm_turn("sess_no_tool")
+    result = await loop._llm_turn_handler.run("sess_no_tool")
 
-    assert result["finish_reason"] == "stop"
+    assert result.finish_reason == "stop"
     assert len(session_manager.finish_calls) == 1
     assert session_manager.finish_calls[0]["session_id"] == "sess_no_tool"
 
@@ -130,6 +149,7 @@ async def test_call_llm_turn_sets_context_budget_without_usage():
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
         ),
+        strategy_manager=SimpleNamespace(run=_noop_compaction),
     )
 
     loop = AgentEventLoop(
@@ -139,10 +159,10 @@ async def test_call_llm_turn_sets_context_budget_without_usage():
         framework=framework,
     )
 
-    result = await loop._call_llm_turn("sess_budget_zero")
+    result = await loop._llm_turn_handler.run("sess_budget_zero")
 
-    assert result["tokens"] == {"input": 0, "output": 0, "reasoning": 0}
-    budget = result["context_budget"]
+    assert result.tokens == {"input": 0, "output": 0, "reasoning": 0}
+    budget = result.context_budget
     assert budget.source == "estimated"
     assert budget.total_tokens == 1000
     assert budget.used_tokens == 0
@@ -171,6 +191,7 @@ async def test_call_llm_turn_sets_context_budget_from_provider_usage():
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
         ),
+        strategy_manager=SimpleNamespace(run=_noop_compaction),
     )
 
     loop = AgentEventLoop(
@@ -180,14 +201,58 @@ async def test_call_llm_turn_sets_context_budget_from_provider_usage():
         framework=framework,
     )
 
-    result = await loop._call_llm_turn("sess_budget_provider")
+    result = await loop._llm_turn_handler.run("sess_budget_provider")
 
-    assert result["tokens"] == {"input": 120, "output": 30, "reasoning": 7}
-    budget = result["context_budget"]
+    assert result.tokens == {"input": 120, "output": 30, "reasoning": 7}
+    budget = result.context_budget
     assert budget.source == "provider"
     assert budget.used_tokens == 157
     assert budget.remaining_tokens == 1843
     assert session_manager.metadata_save_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_call_llm_turn_exposes_thinking_content():
+    context = SessionContext(
+        session_id="sess_thinking",
+        model_profile_id="safe",
+        agent_name="agent_stub",
+    )
+    context.build_user_message(parts=[UserTextPart(text="hi")])
+    session_manager = _SessionManagerStub(context)
+
+    framework = SimpleNamespace(
+        resolve_llm_config_for_agent=lambda _agent, _profile: LLMConfig(
+            adapter="openai_compatible",
+            provider="openai",
+            model="mock",
+        ),
+        get_agent=lambda _: SimpleNamespace(
+            tool_registry=SimpleNamespace(get_definitions=lambda: []),
+            get_system_prompt=lambda _ctx: None,
+        ),
+        strategy_manager=SimpleNamespace(run=_noop_compaction),
+    )
+
+    loop = AgentEventLoop(
+        bus=MessageBus(),
+        session_manager=session_manager,
+        adapter_registry=SimpleNamespace(get=lambda _cfg: _LLMThinkingStub()),
+        framework=framework,
+    )
+
+    result = await loop._llm_turn_handler.run("sess_thinking")
+
+    assert result.thinking == "step-1 step-2"
+    assert result.content == "hello"
+    thinking_events = [
+        event
+        for event in session_manager.emitted_events
+        if event.type == EventType.LLM_THINKING
+    ]
+    assert len(thinking_events) == 2
+    assert thinking_events[0].data["thinking"] == "step-1"
+    assert thinking_events[1].data["thinking"] == " step-2"
 
 
 @pytest.mark.asyncio
@@ -207,6 +272,7 @@ async def test_conversation_loop_tool_branch_uses_finish_assistant_message():
             model="mock",
         ),
         get_agent=lambda _: None,
+        strategy_manager=SimpleNamespace(run=_noop_compaction),
     )
     loop = AgentEventLoop(
         bus=MessageBus(),
@@ -225,34 +291,42 @@ async def test_conversation_loop_tool_branch_uses_finish_assistant_message():
                 provider_id="openai",
                 model_id="mock",
             )
-            return {
-                "content": "",
-                "tool_calls": [
+            return LLMTurnResult(
+                content="",
+                thinking="",
+                tool_calls=[
                     {
                         "id": "call_1",
                         "type": "function",
                         "function": {"name": "echo", "arguments": "{}"},
                     }
                 ],
-                "finish_reason": "tool_calls",
-                "cost": 0.0,
-                "tokens": {},
-                "message_id": context.current_message.message_id if context.current_message else "",
-            }
+                finish_reason="tool_calls",
+                cost=0.0,
+                tokens={"input": 0, "output": 0, "reasoning": 0},
+                context_budget=ContextBudget(),
+                context_compaction=CompactionPayload.invalid(stage="pre_call"),
+                context_compaction_events=[],
+                message_id=context.current_message.message_id if context.current_message else "",
+            )
 
-        return {
-            "content": "done",
-            "tool_calls": [],
-            "finish_reason": "stop",
-            "cost": 0.0,
-            "tokens": {},
-            "message_id": "msg_done",
-        }
+        return LLMTurnResult(
+            content="done",
+            thinking="",
+            tool_calls=[],
+            finish_reason="stop",
+            cost=0.0,
+            tokens={"input": 0, "output": 0, "reasoning": 0},
+            context_budget=ContextBudget(),
+            context_compaction=CompactionPayload.invalid(stage="pre_call"),
+            context_compaction_events=[],
+            message_id="msg_done",
+        )
 
     async def _fake_execute_tools(session_id: str, tool_calls: list):
         return []
 
-    loop._call_llm_turn = _fake_call_llm_turn  # type: ignore[method-assign]
+    loop._llm_turn_handler.run = _fake_call_llm_turn  # type: ignore[method-assign]
     loop._execute_tools = _fake_execute_tools  # type: ignore[method-assign]
 
     await loop._conversation_loop("sess_tool")

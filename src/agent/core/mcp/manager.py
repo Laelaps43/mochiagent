@@ -6,13 +6,13 @@ import asyncio
 import random
 import time
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 import httpx
 from loguru import logger
 
 from agent.core.tools import ToolRegistry
+from .types import MCPServerConfig, MCPServerSnapshot, MCPServerState
 
 
 def _to_int(value: Any, default: int, minimum: int) -> int:
@@ -45,23 +45,6 @@ def _format_exception(exc: BaseException) -> str:
     return " | ".join(unique[:3]) + f" | ... (+{len(unique) - 3} more)"
 
 
-@dataclass
-class MCPServerState:
-    status: str = "disconnected"  # connecting|connected|degraded|failed|disconnected
-    last_error: str | None = None
-    consecutive_failures: int = 0
-    last_connected_at: float | None = None
-    tool_count: int = 0
-    next_retry_at: float | None = None
-    connect_timeout_ms: int = 8000
-    max_retries: int = 2
-    retry_initial_ms: int = 300
-    retry_max_ms: int = 3000
-    failure_threshold: int = 3
-    cooldown_sec: int = 20
-    tool_timeout_sec: int = 30
-
-
 class MCPManager:
     """Agent-scoped MCP runtime state manager."""
 
@@ -70,11 +53,21 @@ class MCPManager:
         self._default_timeout = default_timeout
         self._states: dict[str, MCPServerState] = {}
 
+    @staticmethod
+    def _coerce_server_config(raw: object) -> MCPServerConfig:
+        if isinstance(raw, dict):
+            return raw
+        logger.warning(
+            "MCP server config is not a dict (got {}), using empty config",
+            type(raw).__name__,
+        )
+        return {}
+
     @property
     def registry(self) -> ToolRegistry:
         return self._registry
 
-    def register_server(self, server_name: str, cfg: dict[str, Any]) -> MCPServerState:
+    def register_server(self, server_name: str, cfg: MCPServerConfig) -> MCPServerState:
         state = self._states.get(server_name) or MCPServerState()
         state.connect_timeout_ms = _to_int(cfg.get("connectTimeoutMs"), default=8000, minimum=100)
         state.max_retries = _to_int(cfg.get("maxRetries"), default=2, minimum=0)
@@ -90,7 +83,7 @@ class MCPManager:
         self._states[server_name] = state
         return state
 
-    def snapshot(self) -> dict[str, dict[str, Any]]:
+    def snapshot(self) -> dict[str, MCPServerSnapshot]:
         return {
             name: {
                 "status": state.status,
@@ -179,7 +172,7 @@ class MCPManager:
     async def connect_servers(
         self,
         *,
-        mcp_servers: dict[str, Any],
+        mcp_servers: Mapping[str, object],
         stack: AsyncExitStack,
     ) -> int:
         """
@@ -203,7 +196,7 @@ class MCPManager:
 
         registered = 0
         for server_name, raw_cfg in mcp_servers.items():
-            cfg = raw_cfg if isinstance(raw_cfg, dict) else {}
+            cfg = self._coerce_server_config(raw_cfg)
             state = self.register_server(server_name, cfg)
             self.set_status(server_name, "connecting")
 

@@ -12,6 +12,7 @@ from .core.loop import AgentEventLoop
 from .core.session import SessionManager
 from .core.storage import StorageProvider
 from .core.llm import AdapterRegistry
+from .core.runtime import AgentStrategyManager
 from .types import LLMConfig
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ class AgentFramework:
 
         self._agents: Dict[str, BaseAgent] = {}
         self._llm_profiles: Dict[str, LLMConfig] = {}
+        self._strategy_manager = AgentStrategyManager()
         self._initialized = False
         self._started = False
 
@@ -121,6 +123,10 @@ class AgentFramework:
 
     def list_agents(self) -> list[str]:
         return list(self._agents.keys())
+
+    @property
+    def strategy_manager(self) -> AgentStrategyManager:
+        return self._strategy_manager
 
     def set_llm_configs(self, configs: list[LLMConfig]) -> None:
         """初始化设置 LLM 配置列表（profile_id = provider:model）。"""

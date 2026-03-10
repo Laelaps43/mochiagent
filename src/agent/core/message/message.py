@@ -5,6 +5,8 @@ Message Container - Message = Info + Parts
 from typing import Any, Dict, List
 from pydantic import BaseModel, Field
 
+from loguru import logger
+
 from agent.types import Message as ChatMessage, SerializedMessageData
 from .info import MessageInfo, UserMessageInfo, AssistantMessageInfo
 from .part import Part
@@ -48,6 +50,8 @@ class Message(BaseModel):
                 parts.append(ReasoningPart(**part_data))
             elif part_type == "tool":
                 parts.append(ToolPart(**part_data))
+            else:
+                logger.warning("Unknown part type '{}' in message, skipping", part_type)
         return cls(info=info, parts=parts)
 
     @property

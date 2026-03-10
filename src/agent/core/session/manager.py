@@ -125,8 +125,9 @@ class SessionManager:
     async def get_session(self, session_id: str) -> SessionContext:
         """获取会话（带缓存和延迟加载）"""
         # 1. 快速路径：先不加锁检查缓存（避免锁竞争）
-        if session_id in self._cache:
-            return self._cache[session_id]
+        cached = self._cache.get(session_id)
+        if cached is not None:
+            return cached
 
         # 2. 慢速路径：需要从存储加载，使用锁保护
         async with self._cache_lock:
@@ -174,11 +175,11 @@ class SessionManager:
         if not model_profile_id:
             raise ValueError("model_profile_id is required")
         # 1. 快速路径：检查缓存
-        if session_id in self._cache:
+        cached = self._cache.get(session_id)
+        if cached is not None:
             logger.debug(f"Session {session_id} found in cache")
-            context = self._cache[session_id]
-            await self._refresh_model_profile_if_needed(session_id, context, model_profile_id)
-            return context
+            await self._refresh_model_profile_if_needed(session_id, cached, model_profile_id)
+            return cached
 
         # 2. 慢速路径：需要锁保护（避免竞态条件）
         async with self._cache_lock:
@@ -316,10 +317,19 @@ class SessionManager:
         logger.debug(f"Added and saved user message: {message.info.id}")
         return message
 
-    async def start_assistant_message(self, session_id: str, parent_id: str) -> Message:
+    async def start_assistant_message(
+        self,
+        session_id: str,
+        parent_id: str,
+        *,
+        provider_id: str,
+        model_id: str,
+    ) -> Message:
         """开始 AI 助手消息（不保存，等完成后再保存）"""
         context = await self.get_session(session_id)
-        message = context.build_assistant_message(parent_id)
+        message = context.build_assistant_message(
+            parent_id, provider_id=provider_id, model_id=model_id
+        )
 
         logger.debug(f"Started assistant message: {message.info.id}")
         return message

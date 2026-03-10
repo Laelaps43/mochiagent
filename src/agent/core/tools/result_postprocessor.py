@@ -9,8 +9,9 @@ Tool Result Post Processor - 工具结果后处理
 from __future__ import annotations
 
 import json
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from agent.core.storage import StorageProvider
 from agent.types import ToolResult
@@ -23,7 +24,20 @@ class ToolResultPostProcessConfig:
     preview_tail_chars: int = 1000
 
 
-class ToolResultPostProcessor:
+class ToolResultPostProcessorStrategy(ABC):
+    @abstractmethod
+    async def process(
+        self,
+        *,
+        session_id: str,
+        tool_result: ToolResult,
+        tool_arguments: Mapping[str, Any],
+        storage: StorageProvider,
+    ) -> ToolResult:
+        raise NotImplementedError
+
+
+class ToolResultPostProcessor(ToolResultPostProcessorStrategy):
     def __init__(self, config: ToolResultPostProcessConfig | None = None):
         self.config = config or ToolResultPostProcessConfig()
 
@@ -32,24 +46,26 @@ class ToolResultPostProcessor:
         *,
         session_id: str,
         tool_result: ToolResult,
-        tool_arguments: dict[str, Any],
+        tool_arguments: Mapping[str, Any],
         storage: StorageProvider,
     ) -> ToolResult:
-        if not tool_result.success:
-            error_text = tool_result.error or "Unknown tool error"
-            tool_result.summary = f"Tool `{tool_result.tool_name}` failed: {error_text}"
-            tool_result.truncated = False
-            tool_result.raw_size_chars = len(error_text)
-            return tool_result
+        result = tool_result.model_copy(deep=True)
 
-        raw_text = self._serialize_result(tool_result.result)
+        if not result.success:
+            error_text = result.error or "Unknown tool error"
+            result.summary = f"Tool `{result.tool_name}` failed: {error_text}"
+            result.truncated = False
+            result.raw_size_chars = len(error_text)
+            return result
+
+        raw_text = self._serialize_result(result.result)
         raw_size = len(raw_text)
-        tool_result.raw_size_chars = raw_size
+        result.raw_size_chars = raw_size
 
         if raw_size <= self.config.summary_max_chars:
-            tool_result.summary = raw_text
-            tool_result.truncated = False
-            return tool_result
+            result.summary = raw_text
+            result.truncated = False
+            return result
 
         artifact_ref: str | None = None
         artifact_path: str | None = None
@@ -59,8 +75,8 @@ class ToolResultPostProcessor:
                 kind="tool_result",
                 content=raw_text,
                 metadata={
-                    "tool_name": tool_result.tool_name,
-                    "tool_call_id": tool_result.tool_call_id,
+                    "tool_name": result.tool_name,
+                    "tool_call_id": result.tool_call_id,
                     "arguments": tool_arguments,
                     "raw_size_chars": raw_size,
                 },
@@ -73,7 +89,7 @@ class ToolResultPostProcessor:
         head = raw_text[: self.config.preview_head_chars]
         tail = raw_text[-self.config.preview_tail_chars :]
         summary = (
-            f"Tool `{tool_result.tool_name}` produced large output ({raw_size} chars), truncated for context.\n"
+            f"Tool `{result.tool_name}` produced large output ({raw_size} chars), truncated for context.\n"
             + (
                 f"Artifact: {artifact_ref}\nPath: {artifact_path}\n"
                 "Use `read_file` with `path`, `offset`, `limit` for chunked reading.\n\n"
@@ -85,11 +101,11 @@ class ToolResultPostProcessor:
         if len(summary) > self.config.summary_max_chars:
             summary = summary[: self.config.summary_max_chars]
 
-        tool_result.summary = summary
-        tool_result.artifact_ref = artifact_ref
-        tool_result.artifact_path = artifact_path
-        tool_result.truncated = True
-        return tool_result
+        result.summary = summary
+        result.artifact_ref = artifact_ref
+        result.artifact_path = artifact_path
+        result.truncated = True
+        return result
 
     @staticmethod
     def _serialize_result(value: Any) -> str:
