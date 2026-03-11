@@ -404,7 +404,7 @@ class SessionManager:
 
     async def emit_to_session_listeners(self, session_id: str, event: Event) -> None:
         """发送事件到会话监听器"""
-        listeners = self._session_listeners.get(session_id, [])
+        listeners = list(self._session_listeners.get(session_id, []))
         if not listeners:
             return
 

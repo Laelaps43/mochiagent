@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing_extensions import TypedDict
+from typing import Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 
-@dataclass
-class MCPServerState:
+class MCPServerState(BaseModel):
     status: str = "disconnected"  # connecting|connected|degraded|failed|disconnected
-    last_error: str | None = None
+    last_error: Optional[str] = None
     consecutive_failures: int = 0
-    last_connected_at: float | None = None
+    last_connected_at: Optional[float] = None
     tool_count: int = 0
-    next_retry_at: float | None = None
+    next_retry_at: Optional[float] = None
     connect_timeout_ms: int = 8000
     max_retries: int = 2
     retry_initial_ms: int = 300
@@ -23,36 +23,36 @@ class MCPServerState:
     tool_timeout_sec: int = 30
 
 
-class MCPServerConfig(TypedDict, total=False):
-    command: str
-    args: list[str]
-    env: dict[str, str]
-    url: str
-    headers: dict[str, str]
-    connectTimeoutMs: int
-    maxRetries: int
-    retryInitialMs: int
-    retryMaxMs: int
-    failureThreshold: int
-    cooldownSec: int
-    toolTimeout: int
+class MCPServerConfig(BaseModel):
+    command: str = ""
+    args: List[str] = Field(default_factory=list)
+    env: Dict[str, str] = Field(default_factory=dict)
+    url: str = ""
+    headers: Dict[str, str] = Field(default_factory=dict)
+    connectTimeoutMs: Optional[int] = None
+    maxRetries: Optional[int] = None
+    retryInitialMs: Optional[int] = None
+    retryMaxMs: Optional[int] = None
+    failureThreshold: Optional[int] = None
+    cooldownSec: Optional[int] = None
+    toolTimeout: Optional[int] = None
 
 
-class MCPServerSnapshotConfig(TypedDict):
-    connect_timeout_ms: int
-    max_retries: int
-    retry_initial_ms: int
-    retry_max_ms: int
-    failure_threshold: int
-    cooldown_sec: int
-    tool_timeout_sec: int
+class MCPServerSnapshotConfig(BaseModel):
+    connect_timeout_ms: int = 0
+    max_retries: int = 0
+    retry_initial_ms: int = 0
+    retry_max_ms: int = 0
+    failure_threshold: int = 0
+    cooldown_sec: int = 0
+    tool_timeout_sec: int = 0
 
 
-class MCPServerSnapshot(TypedDict):
-    status: str
-    last_error: str | None
-    consecutive_failures: int
-    last_connected_at: float | None
-    tool_count: int
-    next_retry_at: float | None
-    config: MCPServerSnapshotConfig
+class MCPServerSnapshot(BaseModel):
+    status: str = ""
+    last_error: Optional[str] = None
+    consecutive_failures: int = 0
+    last_connected_at: Optional[float] = None
+    tool_count: int = 0
+    next_retry_at: Optional[float] = None
+    config: MCPServerSnapshotConfig = Field(default_factory=MCPServerSnapshotConfig)

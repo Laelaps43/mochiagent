@@ -8,14 +8,14 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
-from typing import Any, AsyncIterator, NoReturn
+from typing import Any, AsyncIterator, NoReturn, Optional
 
 from loguru import logger
 from openai import AsyncOpenAI
 
 from agent.constants import OPENAI_MAX_RETRIES
-from agent.core.llm.base import LLMMessageInput, LLMProvider
+from agent.core.llm.base import LLMProvider
+from agent.core.message import Message as InternalMessage
 from agent.core.llm.errors import (
     LLMProtocolError,
     LLMProviderError,
@@ -23,7 +23,7 @@ from agent.core.llm.errors import (
     LLMTransportError,
 )
 from agent.core.security import redact_text
-from agent.types import LLMConfig, LLMStreamChunk, Message as ChatMessage, ToolCallPayload, ToolDefinition
+from agent.types import LLMConfig, LLMStreamChunk, ProviderUsage, ToolCallPayload, ToolDefinition, ToolFunctionPayload
 
 try:
     from openai import RateLimitError
@@ -33,14 +33,24 @@ except Exception:  # pragma: no cover
         pass
 
 
-@dataclass(slots=True)
 class _ResponseMeta:
-    status_code: int | None = None
-    content_type: str | None = None
-    x_log_id: str | None = None
-    provider_code: str | None = None
-    provider_message: str | None = None
-    response_body: str | None = None
+    __slots__ = ("status_code", "content_type", "x_log_id", "provider_code", "provider_message", "response_body")
+
+    def __init__(
+        self,
+        status_code: int | None = None,
+        content_type: str | None = None,
+        x_log_id: str | None = None,
+        provider_code: str | None = None,
+        provider_message: str | None = None,
+        response_body: str | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.content_type = content_type
+        self.x_log_id = x_log_id
+        self.provider_code = provider_code
+        self.provider_message = provider_message
+        self.response_body = response_body
 
 
 class OpenAIAdapter(LLMProvider):
@@ -79,31 +89,17 @@ class OpenAIAdapter(LLMProvider):
             for tool in tools
         ]
 
-    @staticmethod
-    def _normalize_messages(messages: list[LLMMessageInput]) -> list[dict[str, Any]]:
-        normalized: list[dict[str, Any]] = []
-        for message in messages:
-            if isinstance(message, ChatMessage):
-                normalized.append(message.model_dump(exclude_none=True, mode="json"))
-                continue
-
-            raise TypeError(
-                f"Unsupported message type: {type(message).__name__}. "
-                "Expected agent.types.Message."
-            )
-        return normalized
-
     def _build_request_params(
         self,
         *,
-        messages: list[LLMMessageInput],
+        messages: list[InternalMessage],
         tools: list[ToolDefinition] | None,
         stream: bool,
         **kwargs: Any,
     ) -> dict[str, object]:
         params: dict[str, Any] = {
             "model": self.config.model,
-            "messages": self._normalize_messages(messages),
+            "messages": self.prepare_messages(messages),
             "stream": stream,
             "temperature": self.config.temperature,
         }
@@ -302,25 +298,21 @@ class OpenAIAdapter(LLMProvider):
     ) -> None:
         idx = tool_call.index if tool_call.index is not None else len(accumulated_tool_calls)
         if idx not in accumulated_tool_calls:
-            accumulated_tool_calls[idx] = {
-                "id": "",
-                "type": "function",
-                "function": {"name": "", "arguments": ""},
-            }
+            accumulated_tool_calls[idx] = ToolCallPayload()
 
         entry = accumulated_tool_calls[idx]
 
         if tool_call.id:
-            entry["id"] = tool_call.id
+            entry.id = tool_call.id
 
         if not tool_call.function:
             return
 
         if tool_call.function.name:
-            entry["function"]["name"] = tool_call.function.name
+            entry.function.name = tool_call.function.name
 
         if tool_call.function.arguments:
-            entry["function"]["arguments"] += tool_call.function.arguments
+            entry.function.arguments += tool_call.function.arguments
 
     @staticmethod
     def _parse_stream_chunk(
@@ -331,57 +323,76 @@ class OpenAIAdapter(LLMProvider):
         if not choice:
             return None
 
-        result: LLMStreamChunk = {}
+        result = LLMStreamChunk()
         delta = choice.delta
+        has_data = False
 
         if delta and delta.content:
-            result["content"] = delta.content
+            result.content = delta.content
+            has_data = True
+
+        reasoning_content = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None) if delta else None
+        if reasoning_content:
+            result.thinking = reasoning_content
+            has_data = True
 
         if delta and delta.tool_calls:
             for tool_call in delta.tool_calls:
                 OpenAIAdapter._merge_tool_call_delta(tool_call, accumulated_tool_calls)
 
         if choice.finish_reason:
-            result["finish_reason"] = choice.finish_reason
+            result.finish_reason = choice.finish_reason
+            has_data = True
             if accumulated_tool_calls:
                 ordered_calls = [accumulated_tool_calls[k] for k in sorted(accumulated_tool_calls)]
-                result["tool_calls"] = ordered_calls
+                result.tool_calls = ordered_calls
         usage = chunk.usage if hasattr(chunk, "usage") else None
         if usage is not None:
-            if hasattr(usage, "model_dump"):
-                result["usage"] = usage.model_dump(exclude_none=True)
-            elif isinstance(usage, dict):
-                result["usage"] = usage
+            details = getattr(usage, "completion_tokens_details", None)
+            result.usage = ProviderUsage(
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                reasoning_tokens=(getattr(details, "reasoning_tokens", 0) or 0) if details else 0,
+            )
+            has_data = True
 
-        return result or None
+        return result if has_data else None
 
     @staticmethod
     def _parse_complete_response(response: Any) -> LLMStreamChunk:
         choice = response.choices[0]
         message = choice.message
-        result: LLMStreamChunk = {
-            "content": message.content or "",
-            "finish_reason": choice.finish_reason,
-        }
+        result = LLMStreamChunk(
+            content=message.content or "",
+            finish_reason=choice.finish_reason,
+        )
 
         if message.tool_calls:
-            result["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
+            result.tool_calls = [
+                ToolCallPayload(
+                    id=tc.id,
+                    function=ToolFunctionPayload(
+                        name=tc.function.name,
+                        arguments=tc.function.arguments,
+                    ),
+                )
                 for tc in message.tool_calls
             ]
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            details = getattr(usage, "completion_tokens_details", None)
+            result.usage = ProviderUsage(
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                reasoning_tokens=(getattr(details, "reasoning_tokens", 0) or 0) if details else 0,
+            )
 
         return result
 
     async def stream_chat(
         self,
-        messages: list[LLMMessageInput],
+        messages: list[InternalMessage],
         tools: list[ToolDefinition] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[LLMStreamChunk]:
@@ -419,12 +430,12 @@ class OpenAIAdapter(LLMProvider):
                 chunk_count += 1
                 result = self._parse_stream_chunk(chunk, accumulated_tool_calls)
                 if result:
-                    if "finish_reason" in result:
+                    if result.finish_reason:
                         logger.debug(
                             "[LLM] Stream completed: chunks={}, total_time={:.2f}s, finish_reason={}",
                             chunk_count,
                             time.time() - start_time,
-                            result.get("finish_reason"),
+                            result.finish_reason,
                         )
                     yield result
 
@@ -435,7 +446,7 @@ class OpenAIAdapter(LLMProvider):
 
     async def complete(
         self,
-        messages: list[LLMMessageInput],
+        messages: list[InternalMessage],
         tools: list[ToolDefinition] | None = None,
         **kwargs: Any,
     ) -> LLMStreamChunk:

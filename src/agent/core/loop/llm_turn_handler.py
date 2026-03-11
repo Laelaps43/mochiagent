@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import time
-from typing import Any, Awaitable, Callable, TYPE_CHECKING
+from typing import Awaitable, Callable, TYPE_CHECKING
 
 from loguru import logger
 
@@ -12,13 +12,17 @@ from agent.core.compression import CompactionPayload, CompactionStage
 from agent.core.llm import AdapterRegistry
 from agent.core.llm.errors import LLMProviderError, is_context_overflow_error as _is_context_overflow
 from agent.core.loop.turn_result import LLMTurnResult
-from agent.core.message import ReasoningPart, TextPart
-from agent.core.prompt import inject_system_prompt
+from agent.core.message import Message as InternalMessage, ReasoningPart, TextPart
+from agent.core.message.info import AssistantMessageInfo
 from agent.core.runtime import StrategyKind
 from agent.core.session import SessionManager
-from agent.types import ContextBudget, Event, EventType, TokenUsage
+from agent.core.utils import extract_turn_tokens
+from agent.types import ContextBudget, Event, EventType, LLMConfig, ProviderUsage, TokenUsage, ToolCallPayload
 
 if TYPE_CHECKING:
+    from agent.core.llm.base import LLMProvider
+    from agent.core.runtime.strategy_manager import AgentStrategyManager
+    from agent.core.session.context import SessionContext
     from agent.framework import AgentFramework
 
 
@@ -35,10 +39,6 @@ class LLMTurnHandler:
         self.adapter_registry = adapter_registry
         self.framework = framework
         self._emit_event = emit_event
-
-    @staticmethod
-    def _empty_context_budget() -> ContextBudget:
-        return ContextBudget()
 
     async def run(self, session_id: str) -> LLMTurnResult:
         context = await self.session_manager.get_session(session_id)
@@ -72,26 +72,28 @@ class LLMTurnHandler:
         if pre_compaction.applied:
             await self._persist_session_metadata(session_id)
 
-        last_user_msg = context.messages[-1]
-        assistant_msg = context.build_assistant_message(
-            parent_id=last_user_msg.message_id,
-            provider_id=llm_config.provider,
-            model_id=llm_config.model,
-        )
+        # 复用已有的 assistant message（tool_calls 轮次），或创建新的
+        if context.current_message and isinstance(context.current_message.info, AssistantMessageInfo):
+            assistant_msg = context.current_message
+        else:
+            last_user_msg = context.messages[-1]
+            assistant_msg = context.build_assistant_message(
+                parent_id=last_user_msg.message_id,
+                provider_id=llm_config.provider,
+                model_id=llm_config.model,
+            )
         message_id = assistant_msg.message_id
 
-        total_tokens: TokenUsage = {"input": 0, "output": 0, "reasoning": 0}
-        total_cost = 0.0
-        provider_usage: dict | None = None
+        provider_usage: ProviderUsage | None = None
 
         tools = agent.tool_registry.get_definitions()
         system_prompt = agent.get_system_prompt(context)
 
         overflow_retries = 0
-        max_overflow_retries = 1
+        max_overflow_retries = llm_config.max_overflow_retries
         text_buffer = ""
         thinking_buffer = ""
-        accumulated_tool_calls: list = []
+        accumulated_tool_calls: list[ToolCallPayload] = []
         finish_reason = None
 
         while True:
@@ -103,9 +105,10 @@ class LLMTurnHandler:
             finish_reason = None
             provider_usage = None
 
-            llm_messages = inject_system_prompt(
-                context.get_llm_messages(),
-                system_prompt,
+            llm_messages = (
+                [InternalMessage.create_system(system_prompt)] + list(context.messages)
+                if system_prompt
+                else list(context.messages)
             )
             logger.debug(f"Calling LLM for session {session_id}: messages={len(llm_messages)}")
 
@@ -114,10 +117,9 @@ class LLMTurnHandler:
                     messages=llm_messages,
                     tools=tools,
                 ):
-                    if "thinking" in chunk and chunk["thinking"]:
-                        thinking_content = chunk["thinking"]
-                        reasoning_buffer += thinking_content
-                        thinking_buffer += thinking_content
+                    if chunk.thinking:
+                        reasoning_buffer += chunk.thinking
+                        thinking_buffer += chunk.thinking
                         if reasoning_start_time is None:
                             reasoning_start_time = int(time.time() * 1000)
                         await self._emit_event(
@@ -126,12 +128,12 @@ class LLMTurnHandler:
                                 session_id=session_id,
                                 data={
                                     "message_id": message_id,
-                                    "thinking": thinking_content,
+                                    "thinking": chunk.thinking,
                                 },
                             )
                         )
 
-                    if "content" in chunk and chunk["content"]:
+                    if chunk.content:
                         if reasoning_buffer:
                             reasoning_part = ReasoningPart.create_fast(
                                 session_id=session_id,
@@ -150,27 +152,26 @@ class LLMTurnHandler:
                             )
                             reasoning_buffer = ""
 
-                        text_buffer += chunk["content"]
-                        text_part = TextPart.create_fast(
-                            session_id=session_id,
-                            message_id=message_id,
-                            text=chunk["content"],
-                        )
-                        context.add_part_to_current(text_part)
+                        text_buffer += chunk.content
                         await self._emit_event(
                             Event(
                                 type=EventType.PART_CREATED,
                                 session_id=session_id,
-                                data=text_part.to_event_payload(),
+                                data={
+                                    "type": "text",
+                                    "text": chunk.content,
+                                    "session_id": session_id,
+                                    "message_id": message_id,
+                                },
                             )
                         )
 
-                    if "tool_calls" in chunk:
-                        accumulated_tool_calls = chunk["tool_calls"]
-                    if "finish_reason" in chunk:
-                        finish_reason = chunk["finish_reason"]
-                    if "usage" in chunk and isinstance(chunk["usage"], dict):
-                        provider_usage = chunk["usage"]
+                    if chunk.tool_calls:
+                        accumulated_tool_calls.extend(chunk.tool_calls)
+                    if chunk.finish_reason:
+                        finish_reason = chunk.finish_reason
+                    if chunk.usage is not None:
+                        provider_usage = chunk.usage
 
                 if reasoning_buffer:
                     reasoning_part = ReasoningPart.create_fast(
@@ -188,6 +189,15 @@ class LLMTurnHandler:
                             data=reasoning_part.to_event_payload(),
                         )
                     )
+
+                # 流结束后，将累积的文本作为单个 TextPart 添加到消息
+                if text_buffer:
+                    final_text_part = TextPart.create_fast(
+                        session_id=session_id,
+                        message_id=message_id,
+                        text=text_buffer,
+                    )
+                    context.add_part_to_current(final_text_part)
 
                 break
             except Exception as exc:
@@ -212,23 +222,20 @@ class LLMTurnHandler:
                 await self._persist_session_metadata(session_id)
                 continue
 
-        total_tokens, source = self.extract_turn_tokens_from_usage(provider_usage)
+        turn_tokens, source = extract_turn_tokens(provider_usage)
+        assistant_msg.info.tokens.input += turn_tokens.input
+        assistant_msg.info.tokens.output += turn_tokens.output
+        assistant_msg.info.tokens.reasoning += turn_tokens.reasoning
+
         context_budget: ContextBudget = context.update_context_budget(
             total_tokens=llm_config.context_window_tokens,
-            input_tokens=total_tokens.get("input", 0),
-            output_tokens=total_tokens.get("output", 0),
-            reasoning_tokens=total_tokens.get("reasoning", 0),
+            input_tokens=turn_tokens.input,
+            output_tokens=turn_tokens.output,
+            reasoning_tokens=turn_tokens.reasoning,
             source=source,
         )
         await self._persist_session_metadata(session_id)
 
-        if not accumulated_tool_calls:
-            await self.session_manager.finish_assistant_message(
-                session_id=session_id,
-                cost=total_cost,
-                tokens=total_tokens,
-                finish=finish_reason or "stop",
-            )
 
         last_compaction = (
             compaction_events[-1]
@@ -240,20 +247,12 @@ class LLMTurnHandler:
             thinking=thinking_buffer,
             tool_calls=accumulated_tool_calls,
             finish_reason=finish_reason,
-            cost=total_cost,
-            tokens=total_tokens,
+            tokens=assistant_msg.info.tokens,
             context_budget=context_budget,
             context_compaction=last_compaction,
             context_compaction_events=compaction_events,
             message_id=message_id,
         )
-
-    async def current_context_budget(self, session_id: str) -> ContextBudget:
-        try:
-            context = await self.session_manager.get_session(session_id)
-        except Exception:
-            return self._empty_context_budget()
-        return context.context_budget
 
     @staticmethod
     def extract_provider_error(exc: Exception) -> LLMProviderError | None:
@@ -278,50 +277,17 @@ class LLMTurnHandler:
     def is_context_overflow_error(exc: Exception) -> bool:
         return _is_context_overflow(exc)
 
-    @staticmethod
-    def _token_to_int(value: object) -> int:
-        if isinstance(value, bool):
-            return 0
-        if isinstance(value, int):
-            return max(value, 0)
-        if isinstance(value, float):
-            return max(int(value), 0)
-        return 0
-
-    @classmethod
-    def extract_turn_tokens_from_usage(cls, usage: dict | None) -> tuple[TokenUsage, str]:
-        if not usage:
-            return {"input": 0, "output": 0, "reasoning": 0}, "estimated"
-
-        input_tokens = cls._token_to_int(
-            usage.get("prompt_tokens", usage.get("input_tokens", 0))
-        )
-        output_tokens = cls._token_to_int(
-            usage.get("completion_tokens", usage.get("output_tokens", 0))
-        )
-        reasoning_tokens = cls._token_to_int(usage.get("reasoning_tokens", 0))
-        if reasoning_tokens == 0:
-            details = usage.get("completion_tokens_details")
-            if isinstance(details, dict):
-                reasoning_tokens = cls._token_to_int(details.get("reasoning_tokens", 0))
-
-        return {
-            "input": input_tokens,
-            "output": output_tokens,
-            "reasoning": reasoning_tokens,
-        }, "provider"
-
     async def _persist_session_metadata(self, session_id: str) -> None:
         await self.session_manager.save_session_metadata(session_id)
 
     async def _run_context_compaction(
         self,
         *,
-        context: Any,
+        context: SessionContext,
         budget: ContextBudget,
-        llm_config: Any,
-        llm: Any,
-        strategy_manager: Any,
+        llm_config: LLMConfig,
+        llm: LLMProvider,
+        strategy_manager: AgentStrategyManager,
         stage: CompactionStage,
         error: str | None = None,
     ) -> CompactionPayload:

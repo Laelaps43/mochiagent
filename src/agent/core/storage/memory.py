@@ -2,6 +2,7 @@
 Memory Storage - 内存存储实现
 """
 
+import asyncio
 import json
 import shutil
 import time
@@ -11,7 +12,6 @@ from uuid import uuid4
 
 from loguru import logger
 
-from agent.core.message import SerializedMessageData
 from .provider import (
     ArtifactMetadata,
     ArtifactReadResult,
@@ -36,7 +36,7 @@ class MemoryStorage(StorageProvider):
 
     def __init__(self, artifact_root: str | Path | None = None):
         self._sessions: dict[str, SessionMetadataData] = {}
-        self._messages: dict[str, list[SerializedMessageData]] = {}
+        self._messages: dict[str, list[dict[str, Any]]] = {}
         self._artifact_root = (
             Path(artifact_root) if artifact_root else (Path.cwd() / ".agent" / "artifacts")
         )
@@ -73,7 +73,7 @@ class MemoryStorage(StorageProvider):
     async def list_sessions(self) -> list[str]:
         return list(self._sessions.keys())
 
-    async def save_message(self, session_id: str, message_data: SerializedMessageData) -> None:
+    async def save_message(self, session_id: str, message_data: dict[str, Any]) -> None:
         if session_id not in self._messages:
             self._messages[session_id] = []
         self._messages[session_id].append(message_data)
@@ -82,7 +82,7 @@ class MemoryStorage(StorageProvider):
             f"total messages: {len(self._messages[session_id])}"
         )
 
-    async def load_messages(self, session_id: str) -> list[SerializedMessageData]:
+    async def load_messages(self, session_id: str) -> list[dict[str, Any]]:
         messages = self._messages.get(session_id, [])
         logger.debug(f"Loaded {len(messages)} messages from memory: {session_id}")
         return messages
@@ -106,24 +106,21 @@ class MemoryStorage(StorageProvider):
         content_path = session_dir / f"{artifact_id}.txt"
         meta_path = session_dir / f"{artifact_id}.json"
 
-        content_path.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(content_path.write_text, content, "utf-8")
         artifact_ref = f"artifact://{session_id}/{artifact_id}"
-        artifact_meta: ArtifactMetadata = {
-            "artifact_ref": artifact_ref,
-            "artifact_id": artifact_id,
-            "session_id": session_id,
-            "kind": kind,
-            "size": len(content),
-            "path": str(content_path),
-            "created_at_ms": int(time.time() * 1000),
-        }
-        if metadata:
-            artifact_meta["metadata"] = metadata
-
-        meta_path.write_text(
-            json.dumps(artifact_meta, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        artifact_meta = ArtifactMetadata(
+            artifact_ref=artifact_ref,
+            artifact_id=artifact_id,
+            session_id=session_id,
+            kind=kind,
+            size=len(content),
+            path=str(content_path),
+            created_at_ms=int(time.time() * 1000),
+            metadata=metadata or {},
         )
+
+        meta_json = json.dumps(artifact_meta.model_dump(), ensure_ascii=False, indent=2)
+        await asyncio.to_thread(meta_path.write_text, meta_json, "utf-8")
         return artifact_meta
 
     async def read_artifact(
@@ -136,35 +133,34 @@ class MemoryStorage(StorageProvider):
         content_path = self._artifact_root / session_id / f"{artifact_id}.txt"
 
         if not content_path.exists():
-            return {
-                "success": False,
-                "error": f"Artifact not found: {artifact_ref}",
-                "artifact_ref": artifact_ref,
-            }
+            return ArtifactReadResult(
+                error=f"Artifact not found: {artifact_ref}",
+                artifact_ref=artifact_ref,
+            )
 
-        text = content_path.read_text(encoding="utf-8")
+        text = await asyncio.to_thread(content_path.read_text, "utf-8")
         safe_offset = max(0, offset)
         safe_limit = max(1, limit)
         chunk = text[safe_offset : safe_offset + safe_limit]
         next_offset = safe_offset + len(chunk)
         eof = next_offset >= len(text)
 
-        return {
-            "success": True,
-            "artifact_ref": artifact_ref,
-            "path": str(content_path),
-            "content": chunk,
-            "offset": safe_offset,
-            "limit": safe_limit,
-            "next_offset": next_offset,
-            "eof": eof,
-            "size": len(text),
-        }
+        return ArtifactReadResult(
+            success=True,
+            artifact_ref=artifact_ref,
+            path=str(content_path),
+            content=chunk,
+            offset=safe_offset,
+            limit=safe_limit,
+            next_offset=next_offset,
+            eof=eof,
+            size=len(text),
+        )
 
     async def delete_artifacts(self, session_id: str) -> None:
         session_dir = self._artifact_root / session_id
         if session_dir.exists():
-            shutil.rmtree(session_dir, ignore_errors=True)
+            await asyncio.to_thread(shutil.rmtree, session_dir, True)
 
     @staticmethod
     def _parse_artifact_ref(artifact_ref: str) -> tuple[str, str]:

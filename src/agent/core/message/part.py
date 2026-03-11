@@ -247,7 +247,7 @@ class ToolStateCompleted(BaseModel):
     raw_size_chars: Optional[int] = None
     truncated: bool = False
     title: str
-    metadata: Any
+    metadata: Any = None
     time: TimeInfo
 
 
