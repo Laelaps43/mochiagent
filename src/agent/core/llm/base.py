@@ -31,16 +31,39 @@ class LLMProvider(ABC):
             tool_results: list[dict[str, Any]] = []
 
             for part in msg.parts:
-                llm_data = part.to_llm_format()
-                if llm_data is None:
-                    continue
-                if llm_data.get("type") == "text":
-                    text_contents.append(llm_data["content"])
-                elif llm_data.get("type") == "tool":
-                    if "tool_call" in llm_data:
-                        tool_calls.append(llm_data["tool_call"])
-                    if "tool_result" in llm_data:
-                        tool_results.append(llm_data["tool_result"])
+                match part:
+                    case {"type": "text", "text": str(text)}:
+                        text_contents.append(text)
+                    case {
+                        "type": "tool",
+                        "call_id": str(call_id),
+                        "tool": str(tool),
+                        "state": state,
+                    }:
+                        if state.status in ("running", "completed", "error"):
+                            tool_calls.append(
+                                {
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {"name": tool, "arguments": state.input.arguments},
+                                }
+                            )
+                        if state.status == "completed":
+                            tool_results.append(
+                                {
+                                    "role": "tool",
+                                    "content": state.summary or state.output,
+                                    "tool_call_id": call_id,
+                                }
+                            )
+                        elif state.status == "error":
+                            tool_results.append(
+                                {
+                                    "role": "tool",
+                                    "content": f"Error: {state.error or 'Unknown error'}",
+                                    "tool_call_id": call_id,
+                                }
+                            )
 
             if not text_contents and not tool_calls:
                 continue
