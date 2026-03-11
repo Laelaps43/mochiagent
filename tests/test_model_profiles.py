@@ -85,5 +85,5 @@ async def test_framework_resolve_rejects_disallowed_model_profile(tmp_path):
     agent = _ProfileAgent()
     await framework.register_agent(agent)
 
-    with pytest.raises(ValueError, match="is not allowed"):
-        framework.resolve_llm_config_for_agent("profile_agent", "openai:gpt-4.1")
+    with pytest.raises(ValueError, match="not available"):
+        agent.context.resolve_llm_config_for_agent("profile_agent", "openai:gpt-4.1")

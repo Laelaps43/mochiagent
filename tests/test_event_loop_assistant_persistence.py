@@ -7,11 +7,11 @@ import pytest
 from agent.core.bus import MessageBus
 from agent.core.compression import CompactionPayload
 from agent.core.loop import AgentEventLoop
-from agent.core.message import UserTextPart
+from agent.core.message import UserTextInput as UserTextPart
 from agent.core.loop.turn_result import LLMTurnResult
 from agent.core.runtime import StrategyKind
 from agent.core.session.context import SessionContext
-from agent.types import ContextBudget, EventType, LLMConfig, SessionState
+from agent.types import ContextBudget, EventType, LLMConfig, LLMStreamChunk, ProviderUsage, SessionState, TokenUsage, ToolCallPayload, ToolFunctionPayload
 
 
 class _SessionManagerStub:
@@ -28,19 +28,17 @@ class _SessionManagerStub:
     async def finish_assistant_message(
         self,
         session_id: str,
-        cost: float = 0.0,
-        tokens: dict | None = None,
+        tokens: TokenUsage | None = None,
         finish: str = "stop",
     ) -> None:
         self.finish_calls.append(
             {
                 "session_id": session_id,
-                "cost": cost,
-                "tokens": tokens or {},
+                "tokens": tokens or TokenUsage(),
                 "finish": finish,
             }
         )
-        self._context.finish_current_message(cost=cost, tokens=tokens, finish=finish)
+        self._context.finish_current_message(tokens=tokens, finish=finish)
 
     async def emit_to_session_listeners(self, session_id: str, event) -> None:
         self.emitted_events.append(event)
@@ -56,29 +54,29 @@ class _SessionManagerStub:
 
 class _LLMNoToolStub:
     async def stream_chat(self, messages, tools=None):
-        yield {"content": "hello"}
-        yield {"finish_reason": "stop"}
+        yield LLMStreamChunk(content="hello")
+        yield LLMStreamChunk(finish_reason="stop")
 
 
 class _LLMNoToolWithUsageStub:
     async def stream_chat(self, messages, tools=None):
-        yield {"content": "hello"}
-        yield {
-            "usage": {
-                "prompt_tokens": 120,
-                "completion_tokens": 30,
-                "completion_tokens_details": {"reasoning_tokens": 7},
-            },
-            "finish_reason": "stop",
-        }
+        yield LLMStreamChunk(content="hello")
+        yield LLMStreamChunk(
+            usage=ProviderUsage(
+                input_tokens=120,
+                output_tokens=30,
+                reasoning_tokens=7,
+            ),
+            finish_reason="stop",
+        )
 
 
 class _LLMThinkingStub:
     async def stream_chat(self, messages, tools=None):
-        yield {"thinking": "step-1"}
-        yield {"thinking": " step-2"}
-        yield {"content": "hello"}
-        yield {"finish_reason": "stop"}
+        yield LLMStreamChunk(thinking="step-1")
+        yield LLMStreamChunk(thinking=" step-2")
+        yield LLMStreamChunk(content="hello")
+        yield LLMStreamChunk(finish_reason="stop")
 
 
 class _AdapterRegistryStub:
@@ -101,17 +99,20 @@ async def test_call_llm_turn_uses_finish_assistant_message_for_persistence():
     context.build_user_message(parts=[UserTextPart(text="hi")])
     session_manager = _SessionManagerStub(context)
 
-    framework = SimpleNamespace(
+    _agent_context = SimpleNamespace(
         resolve_llm_config_for_agent=lambda _agent, _profile: LLMConfig(
             adapter="openai_compatible",
             provider="openai",
             model="mock",
         ),
+        strategy_manager=SimpleNamespace(run=_noop_compaction),
+    )
+    framework = SimpleNamespace(
         get_agent=lambda _: SimpleNamespace(
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
+            context=_agent_context,
         ),
-        strategy_manager=SimpleNamespace(run=_noop_compaction),
     )
 
     loop = AgentEventLoop(
@@ -121,11 +122,11 @@ async def test_call_llm_turn_uses_finish_assistant_message_for_persistence():
         framework=framework,
     )
 
-    result = await loop._llm_turn_handler.run("sess_no_tool")
+    await loop._conversation_loop("sess_no_tool")
 
-    assert result.finish_reason == "stop"
     assert len(session_manager.finish_calls) == 1
     assert session_manager.finish_calls[0]["session_id"] == "sess_no_tool"
+    assert session_manager.finish_calls[0]["finish"] == "stop"
 
 
 @pytest.mark.asyncio
@@ -138,18 +139,21 @@ async def test_call_llm_turn_sets_context_budget_without_usage():
     context.build_user_message(parts=[UserTextPart(text="hi")])
     session_manager = _SessionManagerStub(context)
 
-    framework = SimpleNamespace(
+    _agent_context = SimpleNamespace(
         resolve_llm_config_for_agent=lambda _agent, _profile: LLMConfig(
             adapter="openai_compatible",
             provider="openai",
             model="mock",
             context_window_tokens=1000,
         ),
+        strategy_manager=SimpleNamespace(run=_noop_compaction),
+    )
+    framework = SimpleNamespace(
         get_agent=lambda _: SimpleNamespace(
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
+            context=_agent_context,
         ),
-        strategy_manager=SimpleNamespace(run=_noop_compaction),
     )
 
     loop = AgentEventLoop(
@@ -161,7 +165,7 @@ async def test_call_llm_turn_sets_context_budget_without_usage():
 
     result = await loop._llm_turn_handler.run("sess_budget_zero")
 
-    assert result.tokens == {"input": 0, "output": 0, "reasoning": 0}
+    assert result.tokens == TokenUsage(input=0, output=0, reasoning=0)
     budget = result.context_budget
     assert budget.source == "estimated"
     assert budget.total_tokens == 1000
@@ -180,18 +184,21 @@ async def test_call_llm_turn_sets_context_budget_from_provider_usage():
     context.build_user_message(parts=[UserTextPart(text="hi")])
     session_manager = _SessionManagerStub(context)
 
-    framework = SimpleNamespace(
+    _agent_context = SimpleNamespace(
         resolve_llm_config_for_agent=lambda _agent, _profile: LLMConfig(
             adapter="openai_compatible",
             provider="openai",
             model="mock",
             context_window_tokens=2000,
         ),
+        strategy_manager=SimpleNamespace(run=_noop_compaction),
+    )
+    framework = SimpleNamespace(
         get_agent=lambda _: SimpleNamespace(
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
+            context=_agent_context,
         ),
-        strategy_manager=SimpleNamespace(run=_noop_compaction),
     )
 
     loop = AgentEventLoop(
@@ -203,7 +210,7 @@ async def test_call_llm_turn_sets_context_budget_from_provider_usage():
 
     result = await loop._llm_turn_handler.run("sess_budget_provider")
 
-    assert result.tokens == {"input": 120, "output": 30, "reasoning": 7}
+    assert result.tokens == TokenUsage(input=120, output=30, reasoning=7)
     budget = result.context_budget
     assert budget.source == "provider"
     assert budget.used_tokens == 157
@@ -221,17 +228,20 @@ async def test_call_llm_turn_exposes_thinking_content():
     context.build_user_message(parts=[UserTextPart(text="hi")])
     session_manager = _SessionManagerStub(context)
 
-    framework = SimpleNamespace(
+    _agent_context = SimpleNamespace(
         resolve_llm_config_for_agent=lambda _agent, _profile: LLMConfig(
             adapter="openai_compatible",
             provider="openai",
             model="mock",
         ),
+        strategy_manager=SimpleNamespace(run=_noop_compaction),
+    )
+    framework = SimpleNamespace(
         get_agent=lambda _: SimpleNamespace(
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
+            context=_agent_context,
         ),
-        strategy_manager=SimpleNamespace(run=_noop_compaction),
     )
 
     loop = AgentEventLoop(
@@ -295,28 +305,28 @@ async def test_conversation_loop_tool_branch_uses_finish_assistant_message():
                 content="",
                 thinking="",
                 tool_calls=[
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {"name": "echo", "arguments": "{}"},
-                    }
+                    ToolCallPayload(
+                        id="call_1",
+                        function=ToolFunctionPayload(name="echo", arguments="{}"),
+                    )
                 ],
                 finish_reason="tool_calls",
-                cost=0.0,
-                tokens={"input": 0, "output": 0, "reasoning": 0},
+                tokens=TokenUsage(),
                 context_budget=ContextBudget(),
                 context_compaction=CompactionPayload.invalid(stage="pre_call"),
                 context_compaction_events=[],
                 message_id=context.current_message.message_id if context.current_message else "",
             )
 
+        await session_manager.finish_assistant_message(
+            session_id=session_id, tokens=TokenUsage(), finish="stop",
+        )
         return LLMTurnResult(
             content="done",
             thinking="",
             tool_calls=[],
             finish_reason="stop",
-            cost=0.0,
-            tokens={"input": 0, "output": 0, "reasoning": 0},
+            tokens=TokenUsage(),
             context_budget=ContextBudget(),
             context_compaction=CompactionPayload.invalid(stage="pre_call"),
             context_compaction_events=[],
