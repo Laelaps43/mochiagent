@@ -14,25 +14,25 @@ Designed for future extension:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import Optional, Set
+
+from pydantic import BaseModel, ConfigDict
+
+from agent.core.utils import parse_name_list
 
 
-def _parse_name_list(raw: str | None) -> set[str]:
-    if not raw:
-        return set()
-    return {item.strip().lower() for item in raw.split(",") if item and item.strip()}
+class PolicyDecision(BaseModel):
+    model_config = ConfigDict(frozen=True)
 
-
-@dataclass(frozen=True)
-class PolicyDecision:
     allowed: bool
     reason: str
 
 
-@dataclass(frozen=True)
-class ToolPolicyConfig:
-    allow: set[str] | None = None
-    deny: set[str] | None = None
+class ToolPolicyConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    allow: Optional[Set[str]] = None
+    deny: Optional[Set[str]] = None
 
     def normalized(self) -> "ToolPolicyConfig":
         return ToolPolicyConfig(
@@ -48,8 +48,8 @@ class ToolPolicyConfig:
         deny_csv: str | None = None,
     ) -> "ToolPolicyConfig":
         return cls(
-            allow=_parse_name_list(allow_csv),
-            deny=_parse_name_list(deny_csv),
+            allow=parse_name_list(allow_csv),
+            deny=parse_name_list(deny_csv),
         )
 
 

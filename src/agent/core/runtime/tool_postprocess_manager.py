@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Mapping
 
 from loguru import logger
@@ -16,11 +15,13 @@ from agent.core.tools import (
 )
 
 
-@dataclass(slots=True)
 class _AgentPostprocessorBinding:
-    name: str
-    config: ToolPostprocessorConfig
-    processor: Any
+    __slots__ = ("name", "config", "processor")
+
+    def __init__(self, name: str, config: ToolPostprocessorConfig, processor: Any) -> None:
+        self.name = name
+        self.config = config
+        self.processor = processor
 
 
 class ToolPostprocessManager:

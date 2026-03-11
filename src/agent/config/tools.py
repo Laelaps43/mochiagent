@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Set
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
-@dataclass(frozen=True)
-class ToolPolicyConfig:
-    allow: set[str] = field(default_factory=set)
-    deny: set[str] = field(default_factory=set)
+class ToolPolicyConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    allow: Set[str] = Field(default_factory=set)
+    deny: Set[str] = Field(default_factory=set)
 
     @classmethod
     def from_csv(cls, *, allow_csv: str = "", deny_csv: str = "") -> "ToolPolicyConfig":
@@ -21,25 +24,28 @@ class ToolPolicyConfig:
         return cls(allow=parse(allow_csv), deny=parse(deny_csv))
 
 
-@dataclass(frozen=True)
-class WorkspaceConfig:
-    root: Path = field(default_factory=Path.cwd)
+class WorkspaceConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    root: Path = Field(default_factory=Path.cwd)
     restrict: bool = True
 
 
-@dataclass(frozen=True)
-class ToolSecurityConfig:
+class ToolSecurityConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     enforce_workspace: bool = True
     enforce_command_guard: bool = True
-    command_deny_tokens: set[str] = field(default_factory=lambda: {"`", "$(", "\n", "\r"})
+    command_deny_tokens: Set[str] = Field(default_factory=lambda: {"`", "$(", "\n", "\r"})
 
 
-@dataclass(frozen=True)
-class ToolRuntimeConfig:
+class ToolRuntimeConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     timeout: int = 30
-    policy: ToolPolicyConfig = field(default_factory=ToolPolicyConfig)
-    workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
-    security: ToolSecurityConfig = field(default_factory=ToolSecurityConfig)
+    policy: ToolPolicyConfig = Field(default_factory=ToolPolicyConfig)
+    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
+    security: ToolSecurityConfig = Field(default_factory=ToolSecurityConfig)
     exec_max_output_chars: int = 20000
     web_fetch_max_chars: int = 20000
     web_search_api_key: str = ""

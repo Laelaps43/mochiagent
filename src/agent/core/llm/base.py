@@ -6,9 +6,8 @@ LLM Provider Base - LLM提供商基类
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, List, Optional
 
-from agent.types import LLMConfig, LLMStreamChunk, Message as ChatMessage, ToolDefinition
-
-LLMMessageInput = ChatMessage
+from agent.core.message import Message as InternalMessage
+from agent.types import LLMConfig, LLMStreamChunk, ToolDefinition
 
 
 class LLMProvider(ABC):
@@ -20,10 +19,47 @@ class LLMProvider(ABC):
     def __init__(self, config: LLMConfig):
         self.config = config
 
+    def prepare_messages(self, messages: list[InternalMessage]) -> list[dict[str, Any]]:
+        """将内部 Message 列表转换为 LLM API 格式的 dict 列表。
+
+        子类可覆写（如 Claude API 需要 system 单独传）。
+        """
+        result: list[dict[str, Any]] = []
+        for msg in messages:
+            text_contents: list[str] = []
+            tool_calls: list[dict[str, Any]] = []
+            tool_results: list[dict[str, Any]] = []
+
+            for part in msg.parts:
+                llm_data = part.to_llm_format()
+                if llm_data is None:
+                    continue
+                if llm_data.get("type") == "text":
+                    text_contents.append(llm_data["content"])
+                elif llm_data.get("type") == "tool":
+                    if "tool_call" in llm_data:
+                        tool_calls.append(llm_data["tool_call"])
+                    if "tool_result" in llm_data:
+                        tool_results.append(llm_data["tool_result"])
+
+            if not text_contents and not tool_calls:
+                continue
+
+            main_msg: dict[str, Any] = {
+                "role": msg.info.role,
+                "content": "".join(text_contents),
+            }
+            if msg.info.role == "assistant" and tool_calls:
+                main_msg["tool_calls"] = tool_calls
+            result.append(main_msg)
+            result.extend(tool_results)
+
+        return result
+
     @abstractmethod
     async def stream_chat(
         self,
-        messages: List[LLMMessageInput],
+        messages: list[InternalMessage],
         tools: Optional[List[ToolDefinition]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[LLMStreamChunk]:
@@ -31,7 +67,7 @@ class LLMProvider(ABC):
         流式对话
 
         Args:
-            messages: LLM API 格式的消息列表
+            messages: 内部 Message 列表（含 system/user/assistant）
             tools: 可用工具列表
             **kwargs: 额外参数
 
@@ -46,7 +82,7 @@ class LLMProvider(ABC):
     @abstractmethod
     async def complete(
         self,
-        messages: List[LLMMessageInput],
+        messages: list[InternalMessage],
         tools: Optional[List[ToolDefinition]] = None,
         **kwargs: Any,
     ) -> LLMStreamChunk:
@@ -54,7 +90,7 @@ class LLMProvider(ABC):
         非流式对话
 
         Args:
-            messages: LLM API 格式的消息列表
+            messages: 内部 Message 列表（含 system/user/assistant）
             tools: 可用工具列表
             **kwargs: 额外参数
 

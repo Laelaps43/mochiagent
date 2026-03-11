@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterator, Mapping
+from typing import Dict, Iterator, Mapping
+
+from pydantic import BaseModel, Field
 
 
-@dataclass(slots=True)
-class ToolPostprocessorConfig:
-    values: dict[str, object] = field(default_factory=dict)
+class ToolPostprocessorConfig(BaseModel):
+    values: Dict[str, object] = Field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object] | None = None) -> "ToolPostprocessorConfig":

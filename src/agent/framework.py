@@ -13,6 +13,7 @@ from .core.session import SessionManager
 from .core.storage import StorageProvider
 from .core.llm import AdapterRegistry
 from .core.runtime import AgentStrategyManager
+from .core.utils import normalize_profile_id
 from .types import LLMConfig
 
 if TYPE_CHECKING:
@@ -149,7 +150,7 @@ class AgentFramework:
         """初始化设置 LLM 配置列表（profile_id = provider:model）。"""
         profiles: Dict[str, LLMConfig] = {}
         for config in configs:
-            profile_id = self._normalize_profile_id(f"{config.provider}:{config.model}")
+            profile_id = normalize_profile_id(f"{config.provider}:{config.model}")
             if config.adapter not in self.adapter_registry.list_adapters():
                 available = ", ".join(sorted(self.adapter_registry.list_adapters())) or "<none>"
                 raise ValueError(
@@ -166,24 +167,13 @@ class AgentFramework:
         self._llm_profiles.update(profiles)
         logger.info("Loaded {} llm profiles", len(self._llm_profiles))
 
-    @staticmethod
-    def _normalize_profile_id(profile_id: str) -> str:
-        raw_profile = profile_id.strip()
-        if ":" not in raw_profile:
-            raise ValueError(
-                f"Invalid model profile id '{profile_id}'. Expected format: provider:model"
-            )
-        provider, model = raw_profile.split(":", 1)
-        if not provider.strip() or not model.strip():
-            raise ValueError("provider and model are required to build llm profile id")
-        return f"{provider.strip().lower()}:{model.strip()}"
 
     def _normalize_allowed_profiles(self, allowed_profiles: set[str] | None) -> set[str] | None:
         if allowed_profiles is None:
             return None
         normalized_allowed: set[str] = set()
         for item in allowed_profiles:
-            normalized_allowed.add(self._normalize_profile_id(item))
+            normalized_allowed.add(normalize_profile_id(item))
         return normalized_allowed
 
     async def _setup_agent(self, agent: BaseAgent) -> None:
@@ -260,20 +250,6 @@ class FrameworkRegistry:
         self.instance: Optional[AgentFramework] = None
 
     @staticmethod
-    def resolve_requested_values(
-        max_concurrent: int | None,
-        max_iterations: int | None,
-    ) -> tuple[int, int]:
-        resolved_max_concurrent = (
-            DEFAULT_MAX_CONCURRENT if max_concurrent is None else max_concurrent
-        )
-        resolved_max_iterations = max(
-            1,
-            DEFAULT_MAX_ITERATIONS if max_iterations is None else max_iterations,
-        )
-        return resolved_max_concurrent, resolved_max_iterations
-
-    @staticmethod
     def should_recreate_instance(
         current: AgentFramework,
         requested_max_concurrent: int | None,
@@ -298,10 +274,8 @@ class FrameworkRegistry:
         max_concurrent: int | None = None,
         max_iterations: int | None = None,
     ) -> AgentFramework:
-        resolved_max_concurrent, resolved_max_iterations = self.resolve_requested_values(
-            max_concurrent,
-            max_iterations,
-        )
+        resolved_max_concurrent = max_concurrent if max_concurrent is not None else DEFAULT_MAX_CONCURRENT
+        resolved_max_iterations = max(1, max_iterations if max_iterations is not None else DEFAULT_MAX_ITERATIONS)
 
         if self.instance is None:
             self.instance = AgentFramework(

@@ -3,10 +3,11 @@ from __future__ import annotations
 import pytest
 
 from agent.core.compression import DefaultContextCompactor
+from agent.core.compression.stage import CompactionStage
 from agent.core.compression.types import CompactorRunOptions
-from agent.core.message import UserTextPart
+from agent.core.message import UserTextInput as UserTextPart
 from agent.core.session.context import SessionContext
-from agent.types import ContextBudget, LLMConfig
+from agent.types import ContextBudget, LLMConfig, LLMStreamChunk
 
 
 class _ProviderStub:
@@ -16,7 +17,7 @@ class _ProviderStub:
 
     async def complete(self, messages, tools=None, **kwargs):
         self.calls += 1
-        return {"content": self.summary}
+        return LLMStreamChunk(content=self.summary)
 
 
 @pytest.mark.asyncio
@@ -37,7 +38,8 @@ async def test_default_compactor_pre_call_applies_and_keeps_latest_user_last():
         budget=ContextBudget(used_tokens=0),
         llm_config=cfg,
         llm_provider=_ProviderStub("compact summary"),
-        options=CompactorRunOptions(stage="pre_call"),
+        stage=CompactionStage.PRE_CALL,
+        options=CompactorRunOptions(),
     )
 
     assert result.applied is True
@@ -61,7 +63,8 @@ async def test_default_compactor_overflow_stage_forces_compaction():
         budget=ContextBudget(used_tokens=1),
         llm_config=cfg,
         llm_provider=provider,
-        options=CompactorRunOptions(stage="overflow_error"),
+        stage=CompactionStage.OVERFLOW_ERROR,
+        options=CompactorRunOptions(),
     )
 
     assert result.applied is True

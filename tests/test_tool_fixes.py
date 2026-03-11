@@ -5,6 +5,7 @@ Test Tool Timeout and Validation
 
 import asyncio
 from agent.core.tools import Tool, ToolRegistry, ToolExecutor
+from agent.types import ToolCallPayload, ToolFunctionPayload
 from typing import Any, Dict
 
 
@@ -80,22 +81,20 @@ async def test_timeout():
     # 测试 1: 正常执行 (3秒 < 5秒超时)
     print("\n1.1 Testing normal execution (3s < 5s timeout)...")
     result1 = await executor.execute(
-        {
-            "id": "call_1",
-            "type": "function",
-            "function": {"name": "slow_tool", "arguments": '{"sleep_seconds": 3}'},
-        }
+        ToolCallPayload(
+            id="call_1",
+            function=ToolFunctionPayload(name="slow_tool", arguments='{"sleep_seconds": 3}'),
+        )
     )
     print(f"✅ Result: success={result1.success}, result={result1.result}")
 
     # 测试 2: 超时 (10秒 > 5秒超时)
     print("\n1.2 Testing timeout (10s > 5s timeout)...")
     result2 = await executor.execute(
-        {
-            "id": "call_2",
-            "type": "function",
-            "function": {"name": "slow_tool", "arguments": '{"sleep_seconds": 10}'},
-        }
+        ToolCallPayload(
+            id="call_2",
+            function=ToolFunctionPayload(name="slow_tool", arguments='{"sleep_seconds": 10}'),
+        )
     )
     print(f"❌ Result: success={result2.success}, error={result2.error}")
 
@@ -112,53 +111,40 @@ async def test_validation():
     # 测试 1: 有效参数
     print("\n2.1 Testing valid parameters...")
     result1 = await executor.execute(
-        {
-            "id": "call_3",
-            "type": "function",
-            "function": {"name": "strict_tool", "arguments": '{"name": "Alice", "age": 30}'},
-        }
+        ToolCallPayload(
+            id="call_3",
+            function=ToolFunctionPayload(name="strict_tool", arguments='{"name": "Alice", "age": 30}'),
+        )
     )
     print(f"✅ Result: success={result1.success}, result={result1.result}")
 
     # 测试 2: 缺少必需参数
     print("\n2.2 Testing missing required parameter...")
     result2 = await executor.execute(
-        {
-            "id": "call_4",
-            "type": "function",
-            "function": {
-                "name": "strict_tool",
-                "arguments": '{"name": "Bob"}',  # 缺少 age
-            },
-        }
+        ToolCallPayload(
+            id="call_4",
+            function=ToolFunctionPayload(name="strict_tool", arguments='{"name": "Bob"}'),
+        )
     )
     print(f"❌ Result: success={result2.success}, error={result2.error}")
 
     # 测试 3: 参数类型错误
     print("\n2.3 Testing wrong parameter type...")
     result3 = await executor.execute(
-        {
-            "id": "call_5",
-            "type": "function",
-            "function": {
-                "name": "strict_tool",
-                "arguments": '{"name": "Charlie", "age": "thirty"}',  # age 应该是 int
-            },
-        }
+        ToolCallPayload(
+            id="call_5",
+            function=ToolFunctionPayload(name="strict_tool", arguments='{"name": "Charlie", "age": "thirty"}'),
+        )
     )
     print(f"❌ Result: success={result3.success}, error={result3.error}")
 
     # 测试 4: 参数超出范围
     print("\n2.4 Testing parameter out of range...")
     result4 = await executor.execute(
-        {
-            "id": "call_6",
-            "type": "function",
-            "function": {
-                "name": "strict_tool",
-                "arguments": '{"name": "David", "age": 200}',  # age > 150
-            },
-        }
+        ToolCallPayload(
+            id="call_6",
+            function=ToolFunctionPayload(name="strict_tool", arguments='{"name": "David", "age": 200}'),
+        )
     )
     print(f"❌ Result: success={result4.success}, error={result4.error}")
 

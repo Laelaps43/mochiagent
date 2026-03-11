@@ -3,34 +3,35 @@ Storage Provider - 存储抽象接口
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional, TypedDict
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel, Field
 
 from agent.types import SessionMetadataData
-from agent.core.message import SerializedMessageData
 
 
-class ArtifactMetadata(TypedDict, total=False):
-    artifact_ref: str
-    artifact_id: str
-    session_id: str
-    kind: str
-    size: int
-    path: str
-    created_at_ms: int
-    metadata: dict[str, Any]
+class ArtifactMetadata(BaseModel):
+    artifact_ref: str = ""
+    artifact_id: str = ""
+    session_id: str = ""
+    kind: str = ""
+    size: int = 0
+    path: str = ""
+    created_at_ms: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class ArtifactReadResult(TypedDict, total=False):
-    success: bool
-    error: str
-    artifact_ref: str
-    path: str
-    content: str
-    offset: int
-    limit: int
-    next_offset: int
-    eof: bool
-    size: int
+class ArtifactReadResult(BaseModel):
+    success: bool = False
+    error: str = ""
+    artifact_ref: str = ""
+    path: str = ""
+    content: str = ""
+    offset: int = 0
+    limit: int = 0
+    next_offset: int = 0
+    eof: bool = False
+    size: int = 0
 
 
 class StorageProvider(ABC):
@@ -112,7 +113,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def save_message(self, session_id: str, message_data: SerializedMessageData) -> None:
+    async def save_message(self, session_id: str, message_data: dict[str, Any]) -> None:
         """
         保存单条消息（增量保存）
 
@@ -123,7 +124,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def load_messages(self, session_id: str) -> list[SerializedMessageData]:
+    async def load_messages(self, session_id: str) -> list[dict[str, Any]]:
         """
         加载会话的所有消息
 

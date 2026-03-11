@@ -14,7 +14,7 @@ def test_session_context_metadata_keeps_model_profile_only():
 
 
 def test_session_context_from_snapshot_without_llm_config():
-    from agent.types import SessionMetadataData, ContextBudgetData
+    from agent.types import SessionMetadataData, ContextBudget
     from datetime import datetime, timezone
 
     now = datetime.now(tz=timezone.utc).isoformat()
@@ -24,16 +24,7 @@ def test_session_context_from_snapshot_without_llm_config():
             state="idle",
             model_profile_id="safe",
             agent_name="mochiclaw",
-            context_budget=ContextBudgetData(
-                total_tokens=None,
-                used_tokens=0,
-                remaining_tokens=None,
-                input_tokens=0,
-                output_tokens=0,
-                reasoning_tokens=0,
-                source="estimated",
-                updated_at_ms=0,
-            ),
+            context_budget=ContextBudget.zero(),
             created_at=now,
             updated_at=now,
         )

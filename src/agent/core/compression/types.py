@@ -2,35 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Iterator, Mapping
+from typing import Any, Dict, Iterator, List, Mapping, Optional
+
+from pydantic import BaseModel, Field
 
 
-@dataclass(slots=True)
-class CompactionResult:
+class CompactionResult(BaseModel):
     """Unified compaction output contract."""
 
     applied: bool
     reason: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-    stats: dict[str, Any] = field(default_factory=dict)
-    artifacts: list[dict[str, Any]] = field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    artifacts: List[Dict[str, Any]] = Field(default_factory=list)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "applied": self.applied,
-            "reason": self.reason,
-            "metadata": self.metadata,
-            "stats": self.stats,
-            "artifacts": self.artifacts,
-        }
-
-
-@dataclass(slots=True)
-class StrategyConfig:
+class StrategyConfig(BaseModel):
     """Typed wrapper for strategy-level configuration."""
 
-    values: dict[str, object] = field(default_factory=dict)
+    values: Dict[str, object] = Field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object] | None = None) -> "StrategyConfig":
@@ -49,47 +38,61 @@ class StrategyConfig:
         return len(self.values)
 
 
-@dataclass(slots=True)
-class CompactorRunOptions:
-    """Typed runtime options for one compaction execution."""
+class CompactorRunOptions(BaseModel):
+    """Typed runtime options for one compaction execution.
 
-    stage: str
-    error: str | None = None
-    values: dict[str, object] = field(default_factory=dict)
+    策略配置项（创建 compactor 时确定）:
+        auto_compact_ratio, keep_user_tokens_budget, chars_per_token,
+        model_auto_compact_token_limit, summarization_prompt,
+        summary_max_retries, summary_max_trims, summary_retry_sleep_ms.
+
+    运行时信号（每次调用可能不同）:
+        token_limit_reached, needs_follow_up.
+    """
+
+    # 策略配置
+    auto_compact_ratio: float = 0.9
+    keep_user_tokens_budget: int = 20000
+    chars_per_token: float = 4.0
+    model_auto_compact_token_limit: Optional[int] = None
+    summarization_prompt: str = ""
+    summary_max_retries: int = 2
+    summary_max_trims: int = 20
+    summary_retry_sleep_ms: int = 300
+
+    # 运行时信号
+    token_limit_reached: bool = False
+    needs_follow_up: bool = False
 
     @classmethod
-    def from_config(
-        cls,
-        *,
-        config: StrategyConfig,
-        stage: str,
-        error: str | None = None,
-    ) -> "CompactorRunOptions":
-        return cls(stage=stage, error=error, values=dict(config.values))
-
-    def get(self, key: str, default: object | None = None) -> object | None:
-        if key == "stage":
-            return self.stage
-        if key == "error":
-            return self.error
-        return self.values.get(key, default)
-
-    def __getitem__(self, key: str) -> object | None:
-        value = self.get(key)
-        if value is None and key not in {"error", "stage"} and key not in self.values:
-            raise KeyError(key)
-        return value
+    def from_config(cls, config: StrategyConfig) -> "CompactorRunOptions":
+        values = config.values
+        kwargs: dict[str, object] = {}
+        for f in (
+            "auto_compact_ratio",
+            "keep_user_tokens_budget",
+            "chars_per_token",
+            "model_auto_compact_token_limit",
+            "summarization_prompt",
+            "summary_max_retries",
+            "summary_max_trims",
+            "summary_retry_sleep_ms",
+            "token_limit_reached",
+            "needs_follow_up",
+        ):
+            if f in values:
+                kwargs[f] = values[f]
+        return cls(**kwargs)
 
 
-@dataclass(slots=True)
-class CompactionPayload:
+class CompactionPayload(BaseModel):
     """Normalized compaction payload for loop/runtime layers."""
 
     applied: bool
     reason: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-    stats: dict[str, Any] = field(default_factory=dict)
-    artifacts: list[dict[str, Any]] = field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    artifacts: List[Dict[str, Any]] = Field(default_factory=list)
     name: str = "unknown"
     stage: str = ""
 
@@ -123,29 +126,15 @@ class CompactionPayload:
             stage=stage,
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "applied": self.applied,
-            "reason": self.reason,
-            "metadata": self.metadata,
-            "stats": self.stats,
-            "artifacts": self.artifacts,
-            "name": self.name,
-            "stage": self.stage,
-        }
-
-
-@dataclass(slots=True)
-class CompactionDecision:
+class CompactionDecision(BaseModel):
     """Trigger decision for a compaction attempt."""
 
     apply: bool
     reason: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass(slots=True)
-class SummaryBuildResult:
+class SummaryBuildResult(BaseModel):
     """Summary generation result."""
 
     ok: bool
@@ -185,8 +174,7 @@ class SummaryBuildResult:
         )
 
 
-@dataclass(slots=True)
-class RewriteStats:
+class RewriteStats(BaseModel):
     """Context rewrite statistics."""
 
     before_messages: int

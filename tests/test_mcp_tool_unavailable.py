@@ -5,6 +5,7 @@ import pytest
 
 from agent.common.tools.mcp import MCPToolWrapper
 from agent.core.mcp.manager import MCPManager
+from agent.core.mcp.types import MCPServerConfig
 from agent.core.tools import ToolRegistry
 
 
@@ -20,11 +21,11 @@ async def test_mcp_wrapper_enters_cooldown_after_threshold():
     manager = MCPManager(registry=registry, default_timeout=30)
     manager.register_server(
         "docs",
-        {
-            "failureThreshold": 2,
-            "cooldownSec": 60,
-            "toolTimeout": 0,
-        },
+        MCPServerConfig(
+            failureThreshold=2,
+            cooldownSec=60,
+            toolTimeout=0,
+        ),
     )
     tool_def = SimpleNamespace(
         name="search_docs",
@@ -41,11 +42,11 @@ async def test_mcp_wrapper_enters_cooldown_after_threshold():
 
     result_1 = await wrapper.execute()
     assert "timeout" in result_1.lower()
-    assert manager.snapshot()["docs"]["status"] == "degraded"
+    assert manager.snapshot()["docs"].status == "degraded"
 
     result_2 = await wrapper.execute()
     assert "timeout" in result_2.lower()
-    assert manager.snapshot()["docs"]["status"] == "failed"
+    assert manager.snapshot()["docs"].status == "failed"
 
     # Failed status should short-circuit until cooldown window passes.
     result_3 = await wrapper.execute()

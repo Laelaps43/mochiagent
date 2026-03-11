@@ -10,15 +10,17 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, Mapping
+
+from pydantic import BaseModel, ConfigDict
 
 from agent.core.storage import StorageProvider
 from agent.types import ToolResult
 
 
-@dataclass(frozen=True)
-class ToolResultPostProcessConfig:
+class ToolResultPostProcessConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     summary_max_chars: int = 4000
     preview_head_chars: int = 1500
     preview_tail_chars: int = 1000
@@ -81,8 +83,8 @@ class ToolResultPostProcessor(ToolResultPostProcessorStrategy):
                     "raw_size_chars": raw_size,
                 },
             )
-            artifact_ref = artifact.get("artifact_ref")
-            artifact_path = artifact.get("path")
+            artifact_ref = artifact.artifact_ref
+            artifact_path = artifact.path
         except NotImplementedError:
             artifact_ref = None
             artifact_path = None

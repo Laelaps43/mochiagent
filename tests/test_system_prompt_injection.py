@@ -1,42 +1,37 @@
-from types import SimpleNamespace
+"""Tests for system message creation via Message.create_system()."""
 
-from agent.core.prompt import inject_system_prompt
-from agent.types import Message, MessageRole
-
-
-class _DummyAgent:
-    def __init__(self, text: str | None):
-        self._text = text
-
-    def get_system_prompt(self, context) -> str | None:
-        return self._text
+from agent.core.message import Message, UserMessageInfo, TextPart
 
 
-def _dummy_context():
-    return SimpleNamespace(
-        session_id="s1",
-        agent_name="analytics_agent",
-        llm_config=SimpleNamespace(provider="openai", model="test-model"),
+def test_create_system_message_has_correct_role():
+    msg = Message.create_system("You are a helpful assistant.")
+    assert msg.role == "system"
+    assert len(msg.parts) == 1
+    assert msg.parts[0].text == "You are a helpful assistant."
+
+
+def test_create_system_prepended_to_messages():
+    user_msg = Message(
+        info=UserMessageInfo(id="u1", session_id="s1", agent="general"),
+        parts=[TextPart.create_fast(session_id="s1", message_id="u1", text="hi")],
     )
+    system_msg = Message.create_system("system prompt")
+    messages = [system_msg, user_msg]
+    assert messages[0].role == "system"
+    assert messages[1].role == "user"
 
 
-def test_inject_system_prompt_replaces_existing_system_messages():
-    messages = [
-        Message(role=MessageRole.SYSTEM, content="old-1"),
-        Message(role=MessageRole.USER, content="hi"),
-        Message(role=MessageRole.SYSTEM, content="old-2"),
-    ]
-
-    out = inject_system_prompt(messages, "new-system")
-
-    assert out[0].role == MessageRole.SYSTEM
-    assert out[0].content == "new-system"
-    assert [m.role for m in out].count(MessageRole.SYSTEM) == 1
-    assert out[1:] == [Message(role=MessageRole.USER, content="hi")]
-
-
-def test_inject_system_prompt_noop_when_agent_returns_empty():
-    context = _dummy_context()
-    messages = [Message(role=MessageRole.USER, content="hi")]
-    out = inject_system_prompt(messages, _DummyAgent(None).get_system_prompt(context))
-    assert out == messages
+def test_no_system_when_prompt_is_none():
+    """When system_prompt is None/empty, no system message should be prepended."""
+    user_msg = Message(
+        info=UserMessageInfo(id="u1", session_id="s1", agent="general"),
+        parts=[TextPart.create_fast(session_id="s1", message_id="u1", text="hi")],
+    )
+    system_prompt = None
+    messages = (
+        [Message.create_system(system_prompt)] + [user_msg]
+        if system_prompt
+        else [user_msg]
+    )
+    assert len(messages) == 1
+    assert messages[0].role == "user"

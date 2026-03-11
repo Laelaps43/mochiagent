@@ -9,22 +9,25 @@ Single-entry guard with:
 from __future__ import annotations
 
 import shlex
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional, Set
+
+from pydantic import BaseModel, ConfigDict
 
 
-@dataclass(frozen=True)
-class SecurityDecision:
+class SecurityDecision(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     allowed: bool
     reason: str
 
 
-@dataclass(frozen=True)
-class ToolSecurityConfig:
+class ToolSecurityConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     enforce_workspace: bool = True
     enforce_command_guard: bool = True
-    command_deny_tokens: set[str] | None = None
+    command_deny_tokens: Optional[Set[str]] = None
 
 
 class ToolSecurityGuard:

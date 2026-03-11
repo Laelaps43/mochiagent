@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from loguru import logger
 
@@ -12,6 +11,7 @@ from agent.core.compression import (
     CompactorRunOptions,
     CompactionResult,
     CompactionStage,
+    ContextCompactor,
     ContextCompactorRegistry,
     CompactorFactory,
     DefaultContextCompactor,
@@ -20,12 +20,18 @@ from agent.core.compression import (
 )
 from agent.types import ContextBudget, LLMConfig
 
+if TYPE_CHECKING:
+    from agent.core.llm.base import LLMProvider
+    from agent.core.session.context import SessionContext
 
-@dataclass(slots=True)
+
 class _AgentCompactorBinding:
-    name: str
-    config: StrategyConfig
-    compactor: Any
+    __slots__ = ("name", "config", "compactor")
+
+    def __init__(self, name: str, config: StrategyConfig, compactor: ContextCompactor) -> None:
+        self.name = name
+        self.config = config
+        self.compactor = compactor
 
 
 class ContextCompactionManager:
@@ -64,10 +70,10 @@ class ContextCompactionManager:
     async def run(
         self,
         *,
-        session_context: Any,
+        session_context: SessionContext,
         budget: ContextBudget,
         llm_config: LLMConfig,
-        llm_provider: Any,
+        llm_provider: LLMProvider,
         agent_name: str | None = None,
         stage: CompactionStage,
         error: str | None = None,
@@ -92,11 +98,9 @@ class ContextCompactionManager:
                 budget=budget,
                 llm_config=llm_config,
                 llm_provider=llm_provider,
-                options=CompactorRunOptions.from_config(
-                    config=compactor_config,
-                    stage=stage_value,
-                    error=error,
-                ),
+                stage=stage,
+                error=error,
+                options=CompactorRunOptions.from_config(compactor_config),
             )
         except Exception as exc:
             logger.exception(

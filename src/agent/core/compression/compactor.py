@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from .stage import CompactionStage
 from .types import CompactorRunOptions, CompactionResult
 
 if TYPE_CHECKING:
@@ -24,6 +25,8 @@ class ContextCompactor(ABC):
         budget: "ContextBudget",
         llm_config: "LLMConfig",
         llm_provider: "LLMProvider",
+        stage: CompactionStage,
+        error: str | None = None,
         options: CompactorRunOptions,
     ) -> CompactionResult:
         """
@@ -45,6 +48,8 @@ class NoopContextCompactor(ContextCompactor):
         budget: "ContextBudget",
         llm_config: "LLMConfig",
         llm_provider: "LLMProvider",
+        stage: CompactionStage,
+        error: str | None = None,
         options: CompactorRunOptions,
     ) -> CompactionResult:
         return CompactionResult(applied=False, reason="noop")

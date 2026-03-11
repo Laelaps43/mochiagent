@@ -12,7 +12,7 @@ from loguru import logger
 from .policy import ToolPolicyConfig, ToolPolicyEngine
 from .registry import ToolRegistry
 from .security_guard import ToolSecurityConfig, ToolSecurityGuard
-from agent.types import ToolResult
+from agent.types import ToolCallPayload, ToolResult
 
 
 class ToolExecutor:
@@ -54,28 +54,19 @@ class ToolExecutor:
         )
         logger.info(f"ToolExecutor initialized (timeout={default_timeout}s)")
 
-    async def execute(self, tool_call: Dict[str, Any]) -> ToolResult:
+    async def execute(self, tool_call: ToolCallPayload) -> ToolResult:
         """
         执行工具调用
 
         Args:
-            tool_call: 工具调用字典
-                {
-                    "id": "call_xxx",
-                    "type": "function",
-                    "function": {
-                        "name": "tool_name",
-                        "arguments": '{"arg1": "value1"}'
-                    }
-                }
+            tool_call: 工具调用对象
 
         Returns:
             ToolResult对象
         """
-        tool_call_id = tool_call.get("id", "")
-        function = tool_call.get("function", {})
-        tool_name = function.get("name", "")
-        arguments_str = function.get("arguments", "{}")
+        tool_call_id = tool_call.id
+        tool_name = tool_call.function.name
+        arguments_str = tool_call.function.arguments or "{}"
 
         logger.info(f"Executing tool: {tool_name} (call_id={tool_call_id})")
 
@@ -182,7 +173,7 @@ class ToolExecutor:
                 success=False,
             )
 
-    async def execute_batch(self, tool_calls: list[Dict[str, Any]]) -> list[ToolResult]:
+    async def execute_batch(self, tool_calls: list[ToolCallPayload]) -> list[ToolResult]:
         """
         批量执行工具调用（并行执行）
 
@@ -205,8 +196,8 @@ class ToolExecutor:
         for i, raw_result in enumerate(raw_results):
             if isinstance(raw_result, Exception):
                 tool_call = tool_calls[i]
-                tool_call_id = tool_call.get("id", "")
-                tool_name = tool_call.get("function", {}).get("name", "unknown")
+                tool_call_id = tool_call.id
+                tool_name = tool_call.function.name
 
                 logger.error(
                     f"Tool {tool_name} (call_id={tool_call_id}) failed with exception: {raw_result}",

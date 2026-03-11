@@ -9,12 +9,12 @@ from agent.types import ContextBudget, LLMConfig, ToolResult
 
 
 class _CompactorA:
-    async def run(self, *, session_context, budget, llm_config, llm_provider, options):
+    async def run(self, *, session_context, budget, llm_config, llm_provider, stage, error=None, options):
         return _Result(applied=False, reason="A")
 
 
 class _CompactorB:
-    async def run(self, *, session_context, budget, llm_config, llm_provider, options):
+    async def run(self, *, session_context, budget, llm_config, llm_provider, stage, error=None, options):
         return _Result(applied=True, reason="B")
 
 

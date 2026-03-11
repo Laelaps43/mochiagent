@@ -7,20 +7,28 @@ from .part import (
     PartBase,
     UserInput,
     UserTextInput,
-    UserReasoningInput,
     TextPart,
     ReasoningPart,
     ToolPart,
+    ToolInput,
     ToolState,
+
     ToolStatePending,
     ToolStateRunning,
     ToolStateCompleted,
     ToolStateError,
     TimeInfo,
-    create_part_from_user_input,
 )
-from .info import MessageInfo, UserMessageInfo, AssistantMessageInfo
-from .message import Message, SerializedMessageData
+from .info import (
+    MessageInfo,
+    ModelRef,
+    PathRef,
+    ErrorRef,
+    UserMessageInfo,
+    AssistantMessageInfo,
+    SystemMessageInfo,
+)
+from .message import Message
 
 __all__ = [
     # Part types - 完整实体（存储/流转层）
@@ -32,8 +40,8 @@ __all__ = [
     # Part types - 用户输入（简单 DTO）
     "UserInput",
     "UserTextInput",
-    "UserReasoningInput",
     # Tool State
+    "ToolInput",
     "ToolState",
     "ToolStatePending",
     "ToolStateRunning",
@@ -41,11 +49,13 @@ __all__ = [
     "ToolStateError",
     "TimeInfo",
     # Part factory
-    "create_part_from_user_input",
     # Message types
     "MessageInfo",
+    "ModelRef",
+    "PathRef",
+    "ErrorRef",
     "UserMessageInfo",
     "AssistantMessageInfo",
+    "SystemMessageInfo",
     "Message",
-    "SerializedMessageData",
 ]

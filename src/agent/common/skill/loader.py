@@ -5,7 +5,6 @@ This module provides functionality to load individual skills from a directory
 structure where each skill is defined in a SKILL.md file with YAML frontmatter.
 """
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -13,7 +12,6 @@ import frontmatter
 from loguru import logger
 
 
-@dataclass
 class Skill:
     """
     Represents a loaded skill with its metadata and content.
@@ -21,38 +19,20 @@ class Skill:
     A skill provides specialized knowledge and instructions that guide an agent's
     behavior for specific tasks. Skills are defined as Markdown files with YAML
     frontmatter containing metadata.
-
-    Attributes:
-        name: Unique identifier for the skill
-        description: Human-readable description of what the skill does
-        content: Main instruction content in Markdown format
-        location: Filesystem path to the SKILL.md file
     """
 
-    name: str
-    description: str
-    content: str
-    location: Path
+    __slots__ = ("name", "description", "content", "location")
+
+    def __init__(self, name: str, description: str, content: str, location: Path) -> None:
+        self.name = name
+        self.description = description
+        self.content = content
+        self.location = location
 
     def render(self, context: str = "") -> str:
-        """
-        Render skill content with variable substitution.
-
-        Supports the following substitutions:
-        - $ARGUMENTS: Replaced with the provided context string
-
-        Args:
-            context: Additional context to inject into the skill content
-
-        Returns:
-            Rendered skill content with substitutions applied
-        """
         content = self.content
-
-        # Replace $ARGUMENTS placeholder with provided context
         if context and "$ARGUMENTS" in content:
             content = content.replace("$ARGUMENTS", context)
-
         return content
 
 

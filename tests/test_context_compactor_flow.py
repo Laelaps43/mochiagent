@@ -7,11 +7,12 @@ import pytest
 from agent.core.bus import MessageBus
 from agent.core.compression import CompactionPayload, CompactionStage
 from agent.core.llm.errors import LLMTransportError
+from agent.types import LLMStreamChunk
 from agent.core.loop import AgentEventLoop
 from agent.core.runtime import StrategyKind
-from agent.core.message import UserTextPart
+from agent.core.message import UserTextInput as UserTextPart
 from agent.core.session.context import SessionContext
-from agent.types import LLMConfig, SessionState
+from agent.types import LLMConfig, SessionState, TokenUsage
 
 
 class _SessionManagerStub:
@@ -27,19 +28,18 @@ class _SessionManagerStub:
     async def finish_assistant_message(
         self,
         session_id: str,
-        cost: float = 0.0,
-        tokens: dict | None = None,
+        tokens: TokenUsage | None = None,
         finish: str = "stop",
     ) -> None:
         self.finish_calls.append(
             {
                 "session_id": session_id,
-                "cost": cost,
-                "tokens": tokens or {},
+
+                "tokens": tokens or TokenUsage(),
                 "finish": finish,
             }
         )
-        self._context.finish_current_message(cost=cost, tokens=tokens, finish=finish)
+        self._context.finish_current_message(tokens=tokens, finish=finish)
 
     async def emit_to_session_listeners(self, session_id: str, event) -> None:
         return None
@@ -54,8 +54,8 @@ class _SessionManagerStub:
 
 class _LLMNoToolStub:
     async def stream_chat(self, messages, tools=None):
-        yield {"content": "ok"}
-        yield {"finish_reason": "stop"}
+        yield LLMStreamChunk(content="ok")
+        yield LLMStreamChunk(finish_reason="stop")
 
 
 class _OverflowOnceLLMStub:
@@ -70,8 +70,8 @@ class _OverflowOnceLLMStub:
                 message="maximum context length exceeded",
                 status_code=400,
             )
-        yield {"content": "ok"}
-        yield {"finish_reason": "stop"}
+        yield LLMStreamChunk(content="ok")
+        yield LLMStreamChunk(finish_reason="stop")
 
 
 @pytest.mark.asyncio
@@ -88,18 +88,21 @@ async def test_context_compactor_runs_before_llm_call():
         stages.append(stage.value)
         return CompactionPayload.invalid(stage=stage.value, reason="skip", name="custom")
 
-    framework = SimpleNamespace(
+    _agent_context = SimpleNamespace(
         resolve_llm_config_for_agent=lambda _agent, _profile: LLMConfig(
             adapter="openai_compatible",
             provider="openai",
             model="mock",
             context_window_tokens=1024,
         ),
+        strategy_manager=SimpleNamespace(run=_run_strategy),
+    )
+    framework = SimpleNamespace(
         get_agent=lambda _: SimpleNamespace(
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
+            context=_agent_context,
         ),
-        strategy_manager=SimpleNamespace(run=_run_strategy),
     )
     loop = AgentEventLoop(
         bus=MessageBus(),
@@ -143,18 +146,21 @@ async def test_context_overflow_triggers_compaction_and_retry():
         )
 
     llm = _OverflowOnceLLMStub()
-    framework = SimpleNamespace(
+    _agent_context = SimpleNamespace(
         resolve_llm_config_for_agent=lambda _agent, _profile: LLMConfig(
             adapter="openai_compatible",
             provider="openai",
             model="mock",
             context_window_tokens=1024,
         ),
+        strategy_manager=SimpleNamespace(run=_run_strategy),
+    )
+    framework = SimpleNamespace(
         get_agent=lambda _: SimpleNamespace(
             tool_registry=SimpleNamespace(get_definitions=lambda: []),
             get_system_prompt=lambda _ctx: None,
+            context=_agent_context,
         ),
-        strategy_manager=SimpleNamespace(run=_run_strategy),
     )
     loop = AgentEventLoop(
         bus=MessageBus(),

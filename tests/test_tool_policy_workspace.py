@@ -4,6 +4,7 @@ from typing import Any, Dict
 import pytest
 
 from agent.core.tools import Tool, ToolExecutor, ToolRegistry
+from agent.types import ToolCallPayload, ToolFunctionPayload
 
 
 class EchoTool(Tool):
@@ -76,15 +77,11 @@ class ExecLikeTool(Tool):
         return {"command": command, "workdir": workdir}
 
 
-def _tool_call(name: str, args_json: str, call_id: str = "call_1") -> Dict[str, Any]:
-    return {
-        "id": call_id,
-        "type": "function",
-        "function": {
-            "name": name,
-            "arguments": args_json,
-        },
-    }
+def _tool_call(name: str, args_json: str, call_id: str = "call_1") -> ToolCallPayload:
+    return ToolCallPayload(
+        id=call_id,
+        function=ToolFunctionPayload(name=name, arguments=args_json),
+    )
 
 
 @pytest.mark.asyncio

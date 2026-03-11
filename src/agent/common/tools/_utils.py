@@ -1,9 +1,5 @@
 from __future__ import annotations
 
+from agent.core.utils import truncate_text
 
-def truncate_text(value: str, max_chars: int) -> tuple[str, bool]:
-    if max_chars <= 0:
-        return "", bool(value)
-    if len(value) <= max_chars:
-        return value, False
-    return value[:max_chars], True
+__all__ = ["truncate_text"]

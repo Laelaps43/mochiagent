@@ -21,8 +21,8 @@ async def test_get_or_create_session_refreshes_profile_for_cached_session(tmp_pa
 
     persisted = await storage.load_session("sess_cached")
     assert persisted is not None
-    assert persisted["model_profile_id"] == "profile-b"
-    assert "llm_config" not in persisted
+    assert persisted.model_profile_id == "profile-b"
+    assert not hasattr(persisted, "llm_config")
 
 
 @pytest.mark.asyncio
