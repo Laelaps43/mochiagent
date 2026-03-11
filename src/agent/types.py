@@ -7,10 +7,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 import time
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from agent.core.message.message import SerializedMessageData
 
 
 class MessageRole(str, Enum):
@@ -61,7 +64,8 @@ class ToolResult(BaseModel):
 ContextBudgetSource = Literal["estimated", "provider"]
 
 
-class ContextBudgetData(TypedDict):
+@dataclass
+class ContextBudgetData:
     total_tokens: int | None
     used_tokens: int
     remaining_tokens: int | None
@@ -72,31 +76,26 @@ class ContextBudgetData(TypedDict):
     updated_at_ms: int
 
 
-class SessionMetadataData(TypedDict):
+@dataclass
+class SessionMetadataData:
     session_id: str
     state: str
     model_profile_id: str
     agent_name: str
-    metadata: dict[str, Any]
     context_budget: ContextBudgetData
     created_at: str
     updated_at: str
 
 
-class SerializedMessageData(TypedDict):
-    info: dict[str, Any]
-    parts: list[dict[str, Any]]
-
-
-class SessionData(TypedDict):
+@dataclass
+class SessionData:
     session_id: str
     state: str
     model_profile_id: str
     agent_name: str
-    metadata: dict[str, Any]
     context_budget: ContextBudgetData
     message_count: int
-    messages: list[SerializedMessageData]
+    messages: list["SerializedMessageData"]
     created_at: str
     updated_at: str
 
@@ -115,16 +114,16 @@ class ContextBudget:
     updated_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
 
     def to_dict(self) -> ContextBudgetData:
-        return {
-            "total_tokens": self.total_tokens,
-            "used_tokens": self.used_tokens,
-            "remaining_tokens": self.remaining_tokens,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "reasoning_tokens": self.reasoning_tokens,
-            "source": self.source,
-            "updated_at_ms": self.updated_at_ms,
-        }
+        return ContextBudgetData(
+            total_tokens=self.total_tokens,
+            used_tokens=self.used_tokens,
+            remaining_tokens=self.remaining_tokens,
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            reasoning_tokens=self.reasoning_tokens,
+            source=self.source,
+            updated_at_ms=self.updated_at_ms,
+        )
 
 
 class TokenUsage(TypedDict):

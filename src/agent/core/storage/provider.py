@@ -5,7 +5,8 @@ Storage Provider - 存储抽象接口
 from abc import ABC, abstractmethod
 from typing import Any, Optional, TypedDict
 
-from agent.types import SerializedMessageData, SessionMetadataData
+from agent.types import SessionMetadataData
+from agent.core.message import SerializedMessageData
 
 
 class ArtifactMetadata(TypedDict, total=False):
@@ -52,11 +53,12 @@ class StorageProvider(ABC):
 
         Args:
             session_id: 会话 ID
-            session_data: 会话元数据字典，包含：
+            session_data: 会话元数据，包含：
                 - session_id
                 - state
                 - model_profile_id
-                - metadata
+                - agent_name
+                - context_budget
                 - created_at
                 - updated_at
                 注意：不包含 messages 字段

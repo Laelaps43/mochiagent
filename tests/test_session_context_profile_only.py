@@ -7,21 +7,36 @@ def test_session_context_metadata_keeps_model_profile_only():
         model_profile_id="safe",
     )
 
-    data = context.to_metadata_dict()
-    assert data["model_profile_id"] == "safe"
-    assert "llm_config" not in data
-    assert "context_budget" in data
+    data = context.metadata
+    assert data.model_profile_id == "safe"
+    assert not hasattr(data, "llm_config")
+    assert data.context_budget is not None
 
 
-def test_session_context_from_dict_without_llm_config():
-    context = SessionContext.from_dict(
-        {
-            "session_id": "sess_2",
-            "state": "idle",
-            "model_profile_id": "safe",
-            "agent_name": "mochiclaw",
-            "metadata": {},
-        }
+def test_session_context_from_snapshot_without_llm_config():
+    from agent.types import SessionMetadataData, ContextBudgetData
+    from datetime import datetime, timezone
+
+    now = datetime.now(tz=timezone.utc).isoformat()
+    context = SessionContext.from_snapshot(
+        SessionMetadataData(
+            session_id="sess_2",
+            state="idle",
+            model_profile_id="safe",
+            agent_name="mochiclaw",
+            context_budget=ContextBudgetData(
+                total_tokens=None,
+                used_tokens=0,
+                remaining_tokens=None,
+                input_tokens=0,
+                output_tokens=0,
+                reasoning_tokens=0,
+                source="estimated",
+                updated_at_ms=0,
+            ),
+            created_at=now,
+            updated_at=now,
+        )
     )
     assert context.model_profile_id == "safe"
     assert context.context_budget.used_tokens == 0

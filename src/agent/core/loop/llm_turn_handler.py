@@ -49,7 +49,11 @@ class LLMTurnHandler:
                 "Please take_session with a valid model_profile_id first."
             )
 
-        llm_config = self.framework.resolve_llm_config_for_agent(
+        agent = self.framework.get_agent(context.agent_name)
+        if agent is None:
+            raise ValueError(f"Agent '{context.agent_name}' not found")
+
+        llm_config = agent.context.resolve_llm_config_for_agent(
             context.agent_name,
             context.model_profile_id,
         )
@@ -61,6 +65,7 @@ class LLMTurnHandler:
             budget=deepcopy(context.context_budget),
             llm_config=llm_config,
             llm=llm,
+            strategy_manager=agent.context.strategy_manager,
             stage=CompactionStage.PRE_CALL,
         )
         compaction_events.append(pre_compaction)
@@ -79,9 +84,8 @@ class LLMTurnHandler:
         total_cost = 0.0
         provider_usage: dict | None = None
 
-        agent = self.framework.get_agent(context.agent_name)
-        tools = agent.tool_registry.get_definitions() if agent else []
-        system_prompt = agent.get_system_prompt(context) if agent else None
+        tools = agent.tool_registry.get_definitions()
+        system_prompt = agent.get_system_prompt(context)
 
         overflow_retries = 0
         max_overflow_retries = 1
@@ -196,6 +200,7 @@ class LLMTurnHandler:
                     budget=deepcopy(context.context_budget),
                     llm_config=llm_config,
                     llm=llm,
+                    strategy_manager=agent.context.strategy_manager,
                     stage=CompactionStage.OVERFLOW_ERROR,
                     error=str(exc),
                 )
@@ -316,10 +321,11 @@ class LLMTurnHandler:
         budget: ContextBudget,
         llm_config: Any,
         llm: Any,
+        strategy_manager: Any,
         stage: CompactionStage,
         error: str | None = None,
     ) -> CompactionPayload:
-        result = await self.framework.strategy_manager.run(
+        result = await strategy_manager.run(
             StrategyKind.CONTEXT_COMPACTION,
             session_context=context,
             budget=budget,

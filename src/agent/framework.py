@@ -103,9 +103,26 @@ class AgentFramework:
         if agent.name in self._agents:
             raise ValueError(f"Agent '{agent.name}' already registered")
 
+        normalized_allowed = self._normalize_allowed_profiles(agent.allowed_model_profiles)
+
+        # Agent 必须明确指定允许的 profiles
+        if normalized_allowed is None:
+            raise ValueError(
+                f"Agent '{agent.name}' must specify allowed_model_profiles explicitly"
+            )
+
+        # 过滤出 agent 可用的 llm_profiles
+        agent_llm_profiles = {
+            pid: cfg for pid, cfg in self._llm_profiles.items()
+            if pid in normalized_allowed
+        }
+
         ctx = AgentContext(
             session_manager=self.session_manager,
             message_bus=self.bus,
+            strategy_manager=self._strategy_manager,
+            agent_name=agent.name,
+            llm_profiles=agent_llm_profiles,
         )
         agent.bind_context(ctx)
         self._agents[agent.name] = agent
@@ -132,11 +149,7 @@ class AgentFramework:
         """初始化设置 LLM 配置列表（profile_id = provider:model）。"""
         profiles: Dict[str, LLMConfig] = {}
         for config in configs:
-            provider = config.provider.strip().lower()
-            model = config.model.strip()
-            if not provider or not model:
-                raise ValueError("provider and model are required to build llm profile id")
-            profile_id = f"{provider}:{model}"
+            profile_id = self._normalize_profile_id(f"{config.provider}:{config.model}")
             if config.adapter not in self.adapter_registry.list_adapters():
                 available = ", ".join(sorted(self.adapter_registry.list_adapters())) or "<none>"
                 raise ValueError(
@@ -149,45 +162,29 @@ class AgentFramework:
                 raise ValueError(f"Conflicting llm config for profile_id '{profile_id}'")
             profiles[profile_id] = config
 
-        self._llm_profiles = profiles
+        self._llm_profiles.clear()
+        self._llm_profiles.update(profiles)
         logger.info("Loaded {} llm profiles", len(self._llm_profiles))
 
-    def resolve_llm_config_for_agent(self, agent_name: str, profile_id: str) -> LLMConfig:
-        """
-        按 agent 权限解析 LLM profile。
-        """
+    @staticmethod
+    def _normalize_profile_id(profile_id: str) -> str:
         raw_profile = profile_id.strip()
         if ":" not in raw_profile:
             raise ValueError(
                 f"Invalid model profile id '{profile_id}'. Expected format: provider:model"
             )
         provider, model = raw_profile.split(":", 1)
-        profile_id = f"{provider.strip().lower()}:{model.strip()}"
-        agent = self.get_agent(agent_name)
-        if agent is None:
-            raise ValueError(f"Agent '{agent_name}' not found")
+        if not provider.strip() or not model.strip():
+            raise ValueError("provider and model are required to build llm profile id")
+        return f"{provider.strip().lower()}:{model.strip()}"
 
-        allowed_profiles = agent.allowed_model_profiles
-        if allowed_profiles is not None:
-            normalized_allowed = set()
-            for item in allowed_profiles:
-                raw_item = item.strip()
-                if ":" not in raw_item:
-                    raise ValueError(
-                        f"Invalid model profile id '{item}'. Expected format: provider:model"
-                    )
-                p, m = raw_item.split(":", 1)
-                normalized_allowed.add(f"{p.strip().lower()}:{m.strip()}")
-            if profile_id not in normalized_allowed:
-                raise ValueError(
-                    f"Agent '{agent_name}' is not allowed to use model profile '{profile_id}'"
-                )
-
-        if profile_id not in self._llm_profiles:
-            available = ", ".join(sorted(self._llm_profiles.keys())) or "<none>"
-            raise ValueError(f"LLM profile '{profile_id}' not found. Available: {available}")
-
-        return self._llm_profiles[profile_id]
+    def _normalize_allowed_profiles(self, allowed_profiles: set[str] | None) -> set[str] | None:
+        if allowed_profiles is None:
+            return None
+        normalized_allowed: set[str] = set()
+        for item in allowed_profiles:
+            normalized_allowed.add(self._normalize_profile_id(item))
+        return normalized_allowed
 
     async def _setup_agent(self, agent: BaseAgent) -> None:
         """

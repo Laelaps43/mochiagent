@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from agent.types import ContextBudget, ContextBudgetSource
+from agent.types import ContextBudget, ContextBudgetData, ContextBudgetSource
 
 
 def to_non_negative_int(value: object, *, default: int = 0) -> int:
@@ -18,34 +18,26 @@ def to_non_negative_int(value: object, *, default: int = 0) -> int:
 
 def update_context_budget_from_raw(
     budget: ContextBudget,
-    raw: object,
+    raw: ContextBudgetData | None,
 ) -> ContextBudget:
-    if not isinstance(raw, dict):
+    if raw is None:
         return budget
 
-    total_tokens = raw.get("total_tokens")
-    budget.total_tokens = to_non_negative_int(total_tokens) if total_tokens is not None else None
-    budget.input_tokens = to_non_negative_int(raw.get("input_tokens", 0))
-    budget.output_tokens = to_non_negative_int(raw.get("output_tokens", 0))
-    budget.reasoning_tokens = to_non_negative_int(raw.get("reasoning_tokens", 0))
-    if "used_tokens" in raw:
-        budget.used_tokens = to_non_negative_int(raw.get("used_tokens", 0))
-    else:
-        budget.used_tokens = budget.input_tokens + budget.output_tokens + budget.reasoning_tokens
+    budget.total_tokens = to_non_negative_int(raw.total_tokens) if raw.total_tokens is not None else None
+    budget.input_tokens = to_non_negative_int(raw.input_tokens)
+    budget.output_tokens = to_non_negative_int(raw.output_tokens)
+    budget.reasoning_tokens = to_non_negative_int(raw.reasoning_tokens)
+    budget.used_tokens = to_non_negative_int(raw.used_tokens)
 
     if budget.total_tokens is None:
-        remaining_tokens = raw.get("remaining_tokens")
         budget.remaining_tokens = (
-            to_non_negative_int(remaining_tokens) if remaining_tokens is not None else None
+            to_non_negative_int(raw.remaining_tokens) if raw.remaining_tokens is not None else None
         )
     else:
         budget.remaining_tokens = max(budget.total_tokens - budget.used_tokens, 0)
 
-    budget.source = "provider" if raw.get("source") == "provider" else "estimated"
-    budget.updated_at_ms = to_non_negative_int(
-        raw.get("updated_at_ms", int(time.time() * 1000)),
-        default=int(time.time() * 1000),
-    )
+    budget.source = raw.source
+    budget.updated_at_ms = to_non_negative_int(raw.updated_at_ms, default=int(time.time() * 1000))
     return budget
 
 

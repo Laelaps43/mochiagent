@@ -11,10 +11,10 @@ from uuid import uuid4
 
 from loguru import logger
 
+from agent.core.message import SerializedMessageData
 from .provider import (
     ArtifactMetadata,
     ArtifactReadResult,
-    SerializedMessageData,
     SessionMetadataData,
     StorageProvider,
 )

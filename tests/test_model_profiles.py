@@ -57,7 +57,7 @@ async def test_take_session_uses_default_model_profile(tmp_path):
 
     context = await framework.session_manager.get_session("sess_profile_default")
     assert context.model_profile_id == "openai:glm-4.7"
-    assert "llm_config" not in context.to_metadata_dict()
+    assert not hasattr(context.metadata, "llm_config")
 
 
 @pytest.mark.asyncio

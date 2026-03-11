@@ -19,7 +19,7 @@ from .core.tools import (
     ToolResultPostProcessorStrategy,
 )
 from .core.compression import ContextCompactor, CompactionResult
-from .core.message import UserMessagePartInput, UserPartInput, UserReasoningPart, UserTextPart
+from .core.message import UserInput, UserReasoningInput, UserTextInput
 from .types import (
     Event,
     EventType,
@@ -199,10 +199,9 @@ __all__ = [
     "ToolDefinition",
     "ToolResult",
     # User Input Types
-    "UserMessagePartInput",
-    "UserPartInput",
-    "UserTextPart",
-    "UserReasoningPart",
+    "UserInput",
+    "UserTextInput",
+    "UserReasoningInput",
     # Public Config
     "ToolPolicyConfig",
     "ToolRuntimeConfig",

@@ -288,7 +288,7 @@ class AgentEventLoop:
 
             original_part = tool_parts_map[call_id]
             if result.success:
-                processed_result = await self.framework.strategy_manager.run(
+                processed_result = await agent.context.strategy_manager.run(
                     StrategyKind.TOOL_RESULT_POSTPROCESS,
                     agent_name=context.agent_name,
                     session_id=session_id,

@@ -11,7 +11,7 @@ from loguru import logger
 from .config import ToolRuntimeConfig
 from .core.mcp.manager import MCPManager
 from .core.tools import Tool, ToolRegistry, ToolExecutor, ToolSecurityConfig
-from .core.message import UserMessagePartInput
+from .core.message import UserInput, UserTextInput
 from .common.skill import Skill
 from .common.tools import SkillTool
 from .context import AgentContext
@@ -77,6 +77,18 @@ class BaseAgent(ABC):
         """
         self._ctx = ctx
         logger.debug(f"Agent {self.name} bound to context")
+
+    @property
+    def context(self) -> AgentContext:
+        """
+        获取已绑定的 AgentContext。
+
+        Raises:
+            RuntimeError: If context not bound yet
+        """
+        if self._ctx is None:
+            raise RuntimeError(f"Agent '{self.name}' context not bound yet")
+        return self._ctx
 
     @property
     @abstractmethod
@@ -314,20 +326,24 @@ class BaseAgent(ABC):
     async def push_message(
         self,
         session_id: str,
-        message: Union[str, List[UserMessagePartInput]],
+        message: Union[str, List[UserInput]],
     ) -> None:
         """
         发送消息到会话
 
         Args:
             session_id: 会话 ID
-            message: 消息内容（字符串或结构化消息）
+            message: 消息内容（字符串或结构化消息列表）
 
         Raises:
             RuntimeError: If context not bound
         """
         if not self._ctx:
             raise RuntimeError(f"Agent {self.name} context not bound")
+
+        # 转换消息格式：如果是字符串，自动构建为 UserInput
+        if isinstance(message, str):
+            message = [UserTextInput(text=message)]
 
         await self._ctx.send_message(session_id, message)
 

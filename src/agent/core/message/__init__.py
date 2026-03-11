@@ -5,10 +5,9 @@ Message Module - 消息和 Part 模型
 from .part import (
     Part,
     PartBase,
-    UserPartInput,
-    UserMessagePartInput,
-    UserTextPart,
-    UserReasoningPart,
+    UserInput,
+    UserTextInput,
+    UserReasoningInput,
     TextPart,
     ReasoningPart,
     ToolPart,
@@ -21,19 +20,20 @@ from .part import (
     create_part_from_user_input,
 )
 from .info import MessageInfo, UserMessageInfo, AssistantMessageInfo
-from .message import Message
+from .message import Message, SerializedMessageData
 
 __all__ = [
-    # Part types
+    # Part types - 完整实体（存储/流转层）
     "Part",
     "PartBase",
-    "UserPartInput",
-    "UserMessagePartInput",
-    "UserTextPart",
-    "UserReasoningPart",
     "TextPart",
     "ReasoningPart",
     "ToolPart",
+    # Part types - 用户输入（简单 DTO）
+    "UserInput",
+    "UserTextInput",
+    "UserReasoningInput",
+    # Tool State
     "ToolState",
     "ToolStatePending",
     "ToolStateRunning",
@@ -47,4 +47,5 @@ __all__ = [
     "UserMessageInfo",
     "AssistantMessageInfo",
     "Message",
+    "SerializedMessageData",
 ]

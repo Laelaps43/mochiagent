@@ -54,11 +54,11 @@ class PartBase(BaseModel):
         return None  # 默认不参与
 
 
-# ============ User Input Part Models ============
+# ============ User Input (简单 DTO，无 id) ============
 
 
-class UserTextPart(BaseModel):
-    """用户输入文本 Part"""
+class UserTextInput(BaseModel):
+    """用户输入文本（无 id/session_id，进入 Session 后转为 TextPart）"""
 
     type: Literal["text"] = "text"
     text: str
@@ -67,15 +67,15 @@ class UserTextPart(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
-class UserReasoningPart(BaseModel):
-    """用户输入思考 Part"""
+class UserReasoningInput(BaseModel):
+    """用户输入思考（无 id/session_id，进入 Session 后转为 ReasoningPart）"""
 
     type: Literal["reasoning"] = "reasoning"
     text: str
     metadata: Optional[Dict[str, Any]] = None
 
 
-UserPartInput = Union[UserTextPart, UserReasoningPart]
+UserInput = Union[UserTextInput, UserReasoningInput]
 
 
 # ============ TextPart - 文本内容 ============
@@ -453,17 +453,17 @@ class ToolPart(PartBase):
 
 # ============ Part Union Type ============
 
+# 完整 Part（存储/流转层，带 id/session_id/message_id）
 Part = Union[TextPart, ReasoningPart, ToolPart]
-UserMessagePartInput = Union[UserPartInput, TextPart, ReasoningPart]
 
 
 def create_part_from_user_input(
-    data: UserMessagePartInput,
+    data: UserInput,
     session_id: str,
     message_id: str,
 ) -> Part:
-    """将用户输入 Part 转换为消息内 Part（补齐运行时字段）。"""
-    if isinstance(data, TextPart):
+    """将用户输入转换为消息内 Part（补齐运行时字段）。"""
+    if isinstance(data, UserTextInput):
         return TextPart.create_fast(
             session_id=session_id,
             message_id=message_id,
@@ -473,30 +473,7 @@ def create_part_from_user_input(
             metadata=data.metadata,
         )
 
-    if isinstance(data, ReasoningPart):
-        now = int(time.time() * 1000)
-        start = data.time.start if data.time else now
-        end = data.time.end if data.time and data.time.end is not None else now
-        return ReasoningPart.create_fast(
-            session_id=session_id,
-            message_id=message_id,
-            text=data.text,
-            start=start,
-            end=end,
-            metadata=data.metadata,
-        )
-
-    if isinstance(data, UserTextPart):
-        return TextPart.create_fast(
-            session_id=session_id,
-            message_id=message_id,
-            text=data.text,
-            synthetic=data.synthetic,
-            ignored=data.ignored,
-            metadata=data.metadata,
-        )
-
-    if isinstance(data, UserReasoningPart):
+    if isinstance(data, UserReasoningInput):
         now = int(time.time() * 1000)
         return ReasoningPart.create_fast(
             session_id=session_id,
@@ -508,6 +485,6 @@ def create_part_from_user_input(
         )
 
     raise TypeError(
-        f"Unsupported user part input type: {type(data).__name__}. "
-        "Expected UserTextPart, UserReasoningPart, TextPart, or ReasoningPart."
+        f"Unsupported message part input type: {type(data).__name__}. "
+        "Expected UserTextInput or UserReasoningInput."
     )

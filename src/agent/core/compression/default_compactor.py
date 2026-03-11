@@ -15,7 +15,7 @@ from agent.core.compression.types import (
     RewriteStats,
     SummaryBuildResult,
 )
-from agent.core.message import TextPart, ToolPart, UserTextPart
+from agent.core.message import TextPart, ToolPart, UserTextInput
 from agent.core.compression.stage import CompactionStage
 
 
@@ -361,9 +361,9 @@ class DefaultContextCompactor(ContextCompactor):
         session_context.messages = []
         session_context.current_message = None
         for text in retained_texts:
-            session_context.build_user_message(parts=[UserTextPart(text=text)])
+            session_context.build_user_message(parts=[UserTextInput(text=text)])
         session_context.build_user_message(
-            parts=[UserTextPart(text=f"{summary_prefix}{summary_text.strip()}")]
+            parts=[UserTextInput(text=f"{summary_prefix}{summary_text.strip()}")]
         )
 
         # 关键约束：最新真实 user 需保持在末尾，避免下一轮对 summary 直接回复

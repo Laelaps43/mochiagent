@@ -2,14 +2,22 @@
 Message Container - Message = Info + Parts
 """
 
+from dataclasses import dataclass
 from typing import Any, Dict, List
 from pydantic import BaseModel, Field
 
 from loguru import logger
 
-from agent.types import Message as ChatMessage, SerializedMessageData
+from agent.types import Message as ChatMessage
 from .info import MessageInfo, UserMessageInfo, AssistantMessageInfo
 from .part import Part
+
+
+@dataclass
+class SerializedMessageData:
+    """序列化的消息数据（用于存储和传输）"""
+    info: UserMessageInfo | AssistantMessageInfo
+    parts: list[Part]
 
 
 class Message(BaseModel):
@@ -27,32 +35,14 @@ class Message(BaseModel):
         self.parts.append(part)
 
     def to_dict(self) -> SerializedMessageData:
-        return {
-            "info": self.info.model_dump(),
-            "parts": [part.model_dump() for part in self.parts],
-        }
+        return SerializedMessageData(
+            info=self.info,
+            parts=list(self.parts),
+        )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Message":
-        info_data = data["info"]
-        if info_data["role"] == "user":
-            info = UserMessageInfo(**info_data)
-        else:
-            info = AssistantMessageInfo(**info_data)
-        from .part import TextPart, ReasoningPart, ToolPart
-
-        parts = []
-        for part_data in data.get("parts", []):
-            part_type = part_data.get("type")
-            if part_type == "text":
-                parts.append(TextPart(**part_data))
-            elif part_type == "reasoning":
-                parts.append(ReasoningPart(**part_data))
-            elif part_type == "tool":
-                parts.append(ToolPart(**part_data))
-            else:
-                logger.warning("Unknown part type '{}' in message, skipping", part_type)
-        return cls(info=info, parts=parts)
+    def from_dict(cls, data: SerializedMessageData) -> "Message":
+        return cls(info=data.info, parts=data.parts)
 
     @property
     def message_id(self) -> str:
