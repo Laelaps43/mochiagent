@@ -8,7 +8,7 @@ Agent Event Loop - Agent事件循环
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from loguru import logger
 
@@ -18,7 +18,7 @@ from agent.core.loop.llm_turn_handler import LLMTurnHandler
 from agent.core.message import ToolPart
 from agent.core.runtime import StrategyKind
 from agent.core.session import SessionManager
-from agent.types import Event, EventType, SessionState
+from agent.types import ContextBudget, Event, EventType, SessionState, TokenUsage, ToolCallPayload, ToolResult
 
 if TYPE_CHECKING:
     from agent.framework import AgentFramework
@@ -87,6 +87,7 @@ class AgentEventLoop:
         )
 
         message_id = None
+        context = None
         try:
             context = await self.session_manager.get_session(session_id)
             if context.current_message:
@@ -100,9 +101,8 @@ class AgentEventLoop:
                 session_id=session_id,
                 data={
                     "message_id": message_id,
-                    "cost": 0.0,
-                    "tokens": {},
-                    "context_budget": (await self._llm_turn_handler.current_context_budget(session_id)).to_dict(),
+                    "tokens": TokenUsage(),
+                    "context_budget": context.context_budget if context else ContextBudget(),
                     "finish": "error",
                 },
             )
@@ -153,9 +153,13 @@ class AgentEventLoop:
 
         try:
             iteration_count = 0
+            all_compaction_events: list = []
+
             while iteration_count < self.max_iterations:
                 iteration_count += 1
                 result = await self._llm_turn_handler.run(session_id)
+
+                all_compaction_events.extend(result.context_compaction_events)
 
                 if result.tool_calls and result.finish_reason == "tool_calls":
                     tool_calls = result.tool_calls
@@ -163,12 +167,6 @@ class AgentEventLoop:
 
                     await self.session_manager.update_state(session_id, SessionState.WAITING_TOOL)
                     await self._execute_tools(session_id, tool_calls)
-                    await self.session_manager.finish_assistant_message(
-                        session_id=session_id,
-                        cost=result.cost,
-                        tokens=result.tokens,
-                        finish=result.finish_reason or "tool_calls",
-                    )
                     await self.session_manager.update_state(session_id, SessionState.PROCESSING)
                     continue
 
@@ -178,7 +176,11 @@ class AgentEventLoop:
                     result.finish_reason,
                 )
 
-                context_budget_payload = result.context_budget.to_dict()
+                await self.session_manager.finish_assistant_message(
+                    session_id=session_id,
+                    tokens=result.tokens,
+                    finish=result.finish_reason or "stop",
+                )
 
                 await self._emit_event(
                     Event(
@@ -186,13 +188,10 @@ class AgentEventLoop:
                         session_id=session_id,
                         data={
                             "message_id": result.message_id,
-                            "cost": result.cost,
                             "tokens": result.tokens,
-                            "context_budget": context_budget_payload,
-                            "context_compaction": result.context_compaction.to_dict(),
-                            "context_compaction_events": [
-                                item.to_dict() for item in result.context_compaction_events
-                            ],
+                            "context_budget": result.context_budget,
+                            "context_compaction": result.context_compaction,
+                            "context_compaction_events": all_compaction_events,
                             "finish": result.finish_reason or "stop",
                         },
                     )
@@ -225,9 +224,8 @@ class AgentEventLoop:
                     session_id=session_id,
                     data={
                         "message_id": (context.current_message.message_id if context.current_message else None),
-                        "cost": 0.0,
-                        "tokens": {},
-                        "context_budget": (await self._llm_turn_handler.current_context_budget(session_id)).to_dict(),
+                        "tokens": TokenUsage(),
+                        "context_budget": context.context_budget,
                         "finish": "max_iterations_exceeded",
                     },
                 )
@@ -238,9 +236,14 @@ class AgentEventLoop:
             raise
 
         finally:
-            await self.session_manager.update_state(session_id, SessionState.IDLE)
+            try:
+                ctx = await self.session_manager.get_session(session_id)
+                if ctx.state != SessionState.ERROR:
+                    await self.session_manager.update_state(session_id, SessionState.IDLE)
+            except Exception:
+                pass
 
-    async def _execute_tools(self, session_id: str, tool_calls: list) -> list:
+    async def _execute_tools(self, session_id: str, tool_calls: list[ToolCallPayload]) -> list[ToolResult]:
         context = await self.session_manager.get_session(session_id)
         message_id = context.current_message.message_id if context.current_message else None
 
@@ -258,7 +261,7 @@ class AgentEventLoop:
         tool_parts_map: dict[str, ToolPart] = {}
         for tool_call in tool_calls:
             tool_part = ToolPart.create_running(session_id, message_id, tool_call)
-            tool_parts_map[tool_call["id"]] = tool_part
+            tool_parts_map[tool_call.id] = tool_part
             context.add_part_to_current(tool_part)
 
             await self._emit_event(
@@ -270,16 +273,14 @@ class AgentEventLoop:
             )
 
         results = await agent.tool_executor.execute_batch(tool_calls)
-        tool_args_by_call_id: dict[str, dict[str, object]] = {}
+        tool_args_by_call_id: dict[str, dict[str, Any]] = {}
         for tool_call in tool_calls:
-            function_info = tool_call.get("function", {})
-            call_id = tool_call.get("id", "")
-            raw_args = function_info.get("arguments", "{}")
+            raw_args = tool_call.function.arguments or "{}"
             try:
                 parsed_args = json.loads(raw_args)
             except Exception:
                 parsed_args = {"raw": raw_args}
-            tool_args_by_call_id[call_id] = parsed_args
+            tool_args_by_call_id[tool_call.id] = parsed_args
 
         for result in results:
             call_id = result.tool_call_id

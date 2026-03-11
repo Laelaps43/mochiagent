@@ -2,13 +2,13 @@
 
 import asyncio
 import uuid
-from typing import Dict, Optional
+from typing import Awaitable, Callable, Dict, Optional
 
 from loguru import logger
 
 from agent.core.bus import MessageBus
 from agent.core.message import Message, Part, UserInput  # 移到顶层避免循环导入
-from agent.types import Event, EventType, SessionState
+from agent.types import Event, EventType, SessionData, SessionMetadataData, SessionState, TokenUsage
 from agent.core.storage import StorageProvider, MemoryStorage
 from .context import SessionContext
 from .state import SessionStateMachine
@@ -45,9 +45,33 @@ class SessionManager:
 
         self._cache_lock = asyncio.Lock()
 
-        self._session_listeners: Dict[str, list] = {}
+        self._session_listeners: Dict[str, list[Callable[[Event], Awaitable[None]]]] = {}
 
         logger.info(f"SessionManager initialized with {self.storage.__class__.__name__}")
+
+    async def _load_session_into_cache(
+        self,
+        session_id: str,
+        session_data: SessionMetadataData | SessionData,
+    ) -> SessionContext:
+        """将存储中的会话数据反序列化并加入缓存（调用方需持有 _cache_lock）"""
+        context = SessionContext.from_snapshot(session_data)
+
+        messages_data = await self.storage.load_messages(session_id)
+        context.messages.extend(
+            Message.model_validate(msg_data) for msg_data in messages_data
+        )
+        logger.debug(f"Loaded {len(messages_data)} messages for session {session_id}")
+
+        state_machine = SessionStateMachine(
+            session_id=session_id,
+            on_state_change=self._on_state_change,
+        )
+
+        self._cache[session_id] = context
+        self._state_machines[session_id] = state_machine
+
+        return context
 
     async def _create_and_save_session(
         self,
@@ -90,7 +114,7 @@ class SessionManager:
             Event(
                 type=EventType.SESSION_CREATED,
                 session_id=session_id,
-                data=context.snapshot,
+                data=context.snapshot.model_dump(),
             )
         )
 
@@ -155,26 +179,8 @@ class SessionManager:
             if not session_data:
                 raise ValueError(f"Session {session_id} not found")
 
-            # 4. 反序列化
-            context = SessionContext.from_snapshot(session_data)
-
-            # 5. 主动加载历史消息
-            messages_data = await self.storage.load_messages(session_id)
-            context.messages.extend(
-                Message.from_dict(msg_data) for msg_data in messages_data
-            )
-
-            logger.debug(f"Loaded {len(messages_data)} messages for session {session_id}")
-
-            # 6. 创建状态机
-            state_machine = SessionStateMachine(
-                session_id=session_id,
-                on_state_change=self._on_state_change,
-            )
-
-            # 7. 加入缓存（在锁保护下）
-            self._cache[session_id] = context
-            self._state_machines[session_id] = state_machine
+            # 4. 反序列化、加载消息、加入缓存
+            context = await self._load_session_into_cache(session_id, session_data)
 
             logger.info(f"Loaded session from storage: {session_id}")
             return context
@@ -207,24 +213,8 @@ class SessionManager:
             if await self.storage.session_exists(session_id):
                 session_data = await self.storage.load_session(session_id)
                 if session_data:
-                    # 反序列化
-                    context = SessionContext.from_snapshot(session_data)
-
-                    # 加载历史消息
-                    messages_data = await self.storage.load_messages(session_id)
-                    context.messages.extend(
-                        Message.from_dict(msg_data) for msg_data in messages_data
-                    )
-
-                    # 创建状态机
-                    state_machine = SessionStateMachine(
-                        session_id=session_id,
-                        on_state_change=self._on_state_change,
-                    )
-
-                    # 加入缓存
-                    self._cache[session_id] = context
-                    self._state_machines[session_id] = state_machine
+                    # 反序列化、加载消息、加入缓存
+                    context = await self._load_session_into_cache(session_id, session_data)
 
                     await self._refresh_model_profile_if_needed(
                         session_id, context, model_profile_id
@@ -232,9 +222,6 @@ class SessionManager:
 
                     logger.info(f"Loaded session from storage: {session_id}")
                     return context
-
-            # 4. 创建新会话（释放锁后创建）
-            pass  # 锁在这里释放
 
         # 在锁外创建新会话
         try:
@@ -297,7 +284,7 @@ class SessionManager:
         message = context.build_user_message(parts)
 
         # 自动保存消息
-        await self.storage.save_message(session_id, message.to_dict())
+        await self.storage.save_message(session_id, message.model_dump(mode="json"))
 
         logger.debug(f"Added and saved user message: {message.info.id}")
         return message
@@ -322,8 +309,7 @@ class SessionManager:
     async def finish_assistant_message(
         self,
         session_id: str,
-        cost: float = 0.0,
-        tokens: dict | None = None,
+        tokens: Optional[TokenUsage] = None,
         finish: str = "stop",
     ) -> None:
         """
@@ -331,19 +317,17 @@ class SessionManager:
 
         Args:
             session_id: 会话ID
-            cost: 成本
             tokens: Token 统计
             finish: 结束原因
         """
         context = await self.get_session(session_id)
-        context.finish_current_message(cost=cost, tokens=tokens, finish=finish)
+        finished_message = context.current_message
+        context.finish_current_message(tokens=tokens, finish=finish)
 
         # 自动保存完成的消息
-        if context.messages:
-            last_message = context.messages[-1]
-            await self.storage.save_message(session_id, last_message.to_dct())
-
-            logger.debug(f"Finished and saved assistant message: {last_message.info.id}")
+        if finished_message:
+            await self.storage.save_message(session_id, finished_message.model_dump(mode="json"))
+            logger.debug(f"Finished and saved assistant message: {finished_message.info.id}")
 
     async def save_session_metadata(self, session_id: str) -> None:
         """回写会话元数据（不涉及消息历史）。"""
@@ -399,14 +383,14 @@ class SessionManager:
         else:
             logger.warning(f"Failed to transition session {session_id} to {new_state.value}")
 
-    def add_session_listener(self, session_id: str, listener) -> None:
+    def add_session_listener(self, session_id: str, listener: Callable[[Event], Awaitable[None]]) -> None:
         """添加会话监听器"""
         if session_id not in self._session_listeners:
             self._session_listeners[session_id] = []
         self._session_listeners[session_id].append(listener)
         logger.debug(f"Added listener to session {session_id}")
 
-    def remove_session_listener(self, session_id: str, listener) -> None:
+    def remove_session_listener(self, session_id: str, listener: Callable[[Event], Awaitable[None]]) -> None:
         """移除会话监听器"""
         if session_id in self._session_listeners:
             try:

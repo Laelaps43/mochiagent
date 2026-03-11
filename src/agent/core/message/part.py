@@ -3,13 +3,13 @@ Part Models - Part 数据模型定义
 """
 
 import time
-from typing import Any, Dict, Literal, Optional, Union, cast
+from typing import Annotated, Any, Dict, Literal, Optional, Union, cast
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Discriminator
 
 from agent.constants import UUID_PREFIX_LENGTH
-from agent.types import ToolResult
+from agent.types import ToolCallPayload, ToolResult
 
 
 class TimeInfo(BaseModel):
@@ -66,16 +66,18 @@ class UserTextInput(BaseModel):
     ignored: Optional[bool] = None
     metadata: Optional[Dict[str, Any]] = None
 
+    def to_part(self, session_id: str, message_id: str) -> "TextPart":
+        return TextPart.create_fast(
+            session_id=session_id,
+            message_id=message_id,
+            text=self.text,
+            synthetic=self.synthetic,
+            ignored=self.ignored,
+            metadata=self.metadata,
+        )
 
-class UserReasoningInput(BaseModel):
-    """用户输入思考（无 id/session_id，进入 Session 后转为 ReasoningPart）"""
 
-    type: Literal["reasoning"] = "reasoning"
-    text: str
-    metadata: Optional[Dict[str, Any]] = None
-
-
-UserInput = Union[UserTextInput, UserReasoningInput]
+UserInput = Union[UserTextInput]  # 保留 Union 以便后续扩展新的输入类型
 
 
 # ============ TextPart - 文本内容 ============
@@ -102,16 +104,14 @@ class TextPart(PartBase):
         ignored: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> "TextPart":
-        """热路径创建：跳过 pydantic 校验，降低流式开销。"""
-        return cls.model_construct(
+        return cls(
             id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
             session_id=session_id,
             message_id=message_id,
-            type="text",
             text=text,
             synthetic=synthetic,
             ignored=ignored,
-            time=TimeInfo.model_construct(start=int(time.time() * 1000), end=None),
+            time=TimeInfo(start=int(time.time() * 1000)),
             metadata=metadata,
         )
 
@@ -169,14 +169,12 @@ class ReasoningPart(PartBase):
         end: int,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> "ReasoningPart":
-        """热路径创建：跳过 pydantic 校验，降低流式开销。"""
-        return cls.model_construct(
+        return cls(
             id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
             session_id=session_id,
             message_id=message_id,
-            type="reasoning",
             text=text,
-            time=TimeInfo.model_construct(start=start, end=end),
+            time=TimeInfo(start=start, end=end),
             metadata=metadata,
         )
 
@@ -213,11 +211,17 @@ class ReasoningPart(PartBase):
 # ============ ToolPart - 工具调用 ============
 
 
+class ToolInput(BaseModel):
+    """工具调用输入"""
+
+    arguments: str = "{}"
+
+
 class ToolStatePending(BaseModel):
     """工具状态 - pending"""
 
     status: Literal["pending"] = "pending"
-    input: Dict[str, Any]
+    input: ToolInput
     raw: str
 
 
@@ -225,7 +229,7 @@ class ToolStateRunning(BaseModel):
     """工具状态 - running"""
 
     status: Literal["running"] = "running"
-    input: Dict[str, Any]
+    input: ToolInput
     title: Optional[str] = None
     metadata: Optional[Any] = None
     time: TimeInfo
@@ -235,7 +239,7 @@ class ToolStateCompleted(BaseModel):
     """工具状态 - completed"""
 
     status: Literal["completed"] = "completed"
-    input: Dict[str, Any]
+    input: ToolInput
     output: str
     summary: str = ""
     artifact_ref: Optional[str] = None
@@ -251,13 +255,16 @@ class ToolStateError(BaseModel):
     """工具状态 - error"""
 
     status: Literal["error"] = "error"
-    input: Dict[str, Any]
+    input: ToolInput
     error: str
     metadata: Optional[Any] = None
     time: TimeInfo
 
 
-ToolState = Union[ToolStatePending, ToolStateRunning, ToolStateCompleted, ToolStateError]
+ToolState = Annotated[
+    Union[ToolStatePending, ToolStateRunning, ToolStateCompleted, ToolStateError],
+    Discriminator("status"),
+]
 
 
 class ToolPart(PartBase):
@@ -270,38 +277,33 @@ class ToolPart(PartBase):
     metadata: Optional[Dict[str, Any]] = None
 
     @classmethod
-    def create_running(cls, session_id: str, message_id: str, tool_call: dict) -> "ToolPart":
+    def create_running(cls, session_id: str, message_id: str, tool_call: "ToolCallPayload") -> "ToolPart":
         """
         创建 running 状态的 ToolPart
 
         Args:
             session_id: 会话ID
             message_id: 消息ID
-            tool_call: 工具调用字典
+            tool_call: 工具调用对象
 
         Returns:
             ToolPart
         """
-        call_id = tool_call["id"]
-        function_info = tool_call.get("function", {})
-        tool_name = function_info.get("name", "unknown")
-        arguments = function_info.get("arguments", "{}")
+        call_id = tool_call.id
+        tool_name = tool_call.function.name or "unknown"
+        arguments = tool_call.function.arguments or "{}"
 
-        return cls.model_construct(
+        return cls(
             id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
             session_id=session_id,
             message_id=message_id,
-            type="tool",
             call_id=call_id,
             tool=tool_name,
-            state=ToolStateRunning.model_construct(
-                status="running",
-                input={"arguments": arguments},
+            state=ToolStateRunning(
+                input=ToolInput(arguments=arguments),
                 title=tool_name,
-                metadata=None,
-                time=TimeInfo.model_construct(start=int(time.time() * 1000), end=None),
+                time=TimeInfo(start=int(time.time() * 1000)),
             ),
-            metadata=None,
         )
 
     def update_to_completed(self, result: ToolResult) -> "ToolPart":
@@ -327,15 +329,18 @@ class ToolPart(PartBase):
             except (TypeError, ValueError):
                 output = str(result.result)
 
-        return ToolPart.model_construct(
+        if not isinstance(self.state, ToolStateRunning):
+            raise ValueError(
+                f"Cannot complete a ToolPart in '{self.state.status}' state; expected 'running'"
+            )
+
+        return ToolPart(
             id=self.id,
             session_id=self.session_id,
             message_id=self.message_id,
-            type="tool",
             call_id=result.tool_call_id,
             tool=self.tool,
-            state=ToolStateCompleted.model_construct(
-                status="completed",
+            state=ToolStateCompleted(
                 input=self.state.input,
                 output=output,
                 summary=output,
@@ -354,7 +359,7 @@ class ToolPart(PartBase):
                     "raw_size_chars": result.raw_size_chars,
                     "truncated": result.truncated,
                 },
-                time=TimeInfo.model_construct(
+                time=TimeInfo(
                     start=self.state.time.start,
                     end=int(time.time() * 1000),
                 ),
@@ -372,15 +377,18 @@ class ToolPart(PartBase):
         Returns:
             更新后的 ToolPart
         """
-        return ToolPart.model_construct(
+        if not isinstance(self.state, ToolStateRunning):
+            raise ValueError(
+                f"Cannot error a ToolPart in '{self.state.status}' state; expected 'running'"
+            )
+
+        return ToolPart(
             id=self.id,
             session_id=self.session_id,
             message_id=self.message_id,
-            type="tool",
             call_id=result.tool_call_id,
             tool=self.tool,
-            state=ToolStateError.model_construct(
-                status="error",
+            state=ToolStateError(
                 input=self.state.input,
                 error=result.error or "Unknown error",
                 metadata={
@@ -390,7 +398,7 @@ class ToolPart(PartBase):
                     "error": result.error,
                     "success": result.success,
                 },
-                time=TimeInfo.model_construct(
+                time=TimeInfo(
                     start=self.state.time.start,
                     end=int(time.time() * 1000),
                 ),
@@ -416,7 +424,7 @@ class ToolPart(PartBase):
                 "type": "function",
                 "function": {
                     "name": self.tool,
-                    "arguments": self.state.input.get("arguments", "{}"),
+                    "arguments": self.state.input.arguments,
                 },
             }
 
@@ -454,37 +462,9 @@ class ToolPart(PartBase):
 # ============ Part Union Type ============
 
 # 完整 Part（存储/流转层，带 id/session_id/message_id）
-Part = Union[TextPart, ReasoningPart, ToolPart]
+Part = Annotated[
+    Union[TextPart, ReasoningPart, ToolPart],
+    Discriminator("type"),
+]
 
 
-def create_part_from_user_input(
-    data: UserInput,
-    session_id: str,
-    message_id: str,
-) -> Part:
-    """将用户输入转换为消息内 Part（补齐运行时字段）。"""
-    if isinstance(data, UserTextInput):
-        return TextPart.create_fast(
-            session_id=session_id,
-            message_id=message_id,
-            text=data.text,
-            synthetic=data.synthetic,
-            ignored=data.ignored,
-            metadata=data.metadata,
-        )
-
-    if isinstance(data, UserReasoningInput):
-        now = int(time.time() * 1000)
-        return ReasoningPart.create_fast(
-            session_id=session_id,
-            message_id=message_id,
-            text=data.text,
-            start=now,
-            end=now,
-            metadata=data.metadata,
-        )
-
-    raise TypeError(
-        f"Unsupported message part input type: {type(data).__name__}. "
-        "Expected UserTextInput or UserReasoningInput."
-    )

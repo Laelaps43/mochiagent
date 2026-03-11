@@ -2,8 +2,32 @@
 Message Info - 消息元数据定义
 """
 
-from typing import Any, Dict, Literal, Optional, Union
-from pydantic import BaseModel, Field
+from typing import Annotated, Any, Dict, Literal, Optional, Union
+from pydantic import BaseModel, Discriminator, Field
+
+from agent.types import TokenUsage
+
+
+class ModelRef(BaseModel):
+    """模型引用"""
+
+    provider_id: str = ""
+    model_id: str = ""
+
+
+class PathRef(BaseModel):
+    """路径引用"""
+
+    cwd: str = ""
+    root: str = ""
+
+
+class ErrorRef(BaseModel):
+    """错误信息"""
+
+    message: str = ""
+    code: Optional[str] = None
+    hint: Optional[str] = None
 
 
 class MessageInfoBase(BaseModel):
@@ -11,8 +35,8 @@ class MessageInfoBase(BaseModel):
 
     id: str
     session_id: str
-    role: Literal["user", "assistant"]
-    time: Dict[str, int] = Field(default_factory=dict)  # {"created": ts, "completed": ts}
+    role: Literal["user", "assistant", "system"]
+    created_at: int = 0
 
 
 class UserMessageInfo(MessageInfoBase):
@@ -20,26 +44,38 @@ class UserMessageInfo(MessageInfoBase):
 
     role: Literal["user"] = "user"
     agent: str = "general"
-    model: Optional[Dict[str, str]] = None  # {"provider_id": "openai", "model_id": "gpt-4"}
-    system: Optional[str] = None  # 系统提示
-    tools: Optional[Dict[str, bool]] = None  # 可用工具
-    variant: Optional[str] = None  # 模型变体
+    model: Optional[ModelRef] = None
+    system: Optional[str] = None
+    tools: Optional[Dict[str, bool]] = None
+    variant: Optional[str] = None
 
 
 class AssistantMessageInfo(MessageInfoBase):
     """AI 助手消息元数据"""
 
     role: Literal["assistant"] = "assistant"
-    parent_id: str  # 父消息 ID（用户消息 ID）
+    parent_id: str
     agent: str = "general"
     model_id: str
     provider_id: str
-    path: Optional[Dict[str, str]] = None  # {"cwd": "/path", "root": "/path"}
-    summary: Optional[bool] = None  # 是否为摘要消息
-    cost: float = 0.0  # 成本（美元）
-    tokens: Dict[str, Any] = Field(default_factory=dict)  # Token 统计
-    finish: Optional[str] = None  # 结束原因（stop/max_tokens/tool_calls 等）
-    error: Optional[Dict[str, Any]] = None  # 错误信息
+    path: Optional[PathRef] = None
+    summary: Optional[bool] = None
+    tokens: TokenUsage = Field(default_factory=TokenUsage)
+    completed_at: Optional[int] = None
+    finish: Optional[str] = None
+    error: Optional[ErrorRef] = None
 
 
-MessageInfo = Union[UserMessageInfo, AssistantMessageInfo]
+class SystemMessageInfo(MessageInfoBase):
+    """系统消息元数据（轻量，不持久化）"""
+
+    id: str = ""
+    session_id: str = ""
+    role: Literal["system"] = "system"
+    created_at: int = 0
+
+
+MessageInfo = Annotated[
+    Union[UserMessageInfo, AssistantMessageInfo, SystemMessageInfo],
+    Discriminator("role"),
+]

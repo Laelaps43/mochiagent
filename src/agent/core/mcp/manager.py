@@ -12,15 +12,8 @@ import httpx
 from loguru import logger
 
 from agent.core.tools import ToolRegistry
-from .types import MCPServerConfig, MCPServerSnapshot, MCPServerState
-
-
-def _to_int(value: Any, default: int, minimum: int) -> int:
-    try:
-        parsed = int(value)
-    except Exception:
-        parsed = default
-    return max(minimum, parsed)
+from agent.core.utils import to_int
+from .types import MCPServerConfig, MCPServerSnapshot, MCPServerSnapshotConfig, MCPServerState
 
 
 def _collect_exception_messages(exc: BaseException, out: list[str]) -> None:
@@ -55,13 +48,16 @@ class MCPManager:
 
     @staticmethod
     def _coerce_server_config(raw: object) -> MCPServerConfig:
-        if isinstance(raw, dict):
+        if isinstance(raw, MCPServerConfig):
             return raw
+        if isinstance(raw, dict):
+            fields = set(MCPServerConfig.model_fields.keys())
+            return MCPServerConfig(**{k: v for k, v in raw.items() if k in fields})
         logger.warning(
             "MCP server config is not a dict (got {}), using empty config",
             type(raw).__name__,
         )
-        return {}
+        return MCPServerConfig()
 
     @property
     def registry(self) -> ToolRegistry:
@@ -69,39 +65,39 @@ class MCPManager:
 
     def register_server(self, server_name: str, cfg: MCPServerConfig) -> MCPServerState:
         state = self._states.get(server_name) or MCPServerState()
-        state.connect_timeout_ms = _to_int(cfg.get("connectTimeoutMs"), default=8000, minimum=100)
-        state.max_retries = _to_int(cfg.get("maxRetries"), default=2, minimum=0)
-        state.retry_initial_ms = _to_int(cfg.get("retryInitialMs"), default=300, minimum=50)
-        state.retry_max_ms = _to_int(cfg.get("retryMaxMs"), default=3000, minimum=100)
+        state.connect_timeout_ms = to_int(cfg.connectTimeoutMs, default=8000, minimum=100)
+        state.max_retries = to_int(cfg.maxRetries, default=2, minimum=0)
+        state.retry_initial_ms = to_int(cfg.retryInitialMs, default=300, minimum=50)
+        state.retry_max_ms = to_int(cfg.retryMaxMs, default=3000, minimum=100)
         if state.retry_max_ms < state.retry_initial_ms:
             state.retry_max_ms = state.retry_initial_ms
-        state.failure_threshold = _to_int(cfg.get("failureThreshold"), default=3, minimum=1)
-        state.cooldown_sec = _to_int(cfg.get("cooldownSec"), default=20, minimum=1)
-        state.tool_timeout_sec = _to_int(
-            cfg.get("toolTimeout"), default=self._default_timeout, minimum=1
+        state.failure_threshold = to_int(cfg.failureThreshold, default=3, minimum=1)
+        state.cooldown_sec = to_int(cfg.cooldownSec, default=20, minimum=1)
+        state.tool_timeout_sec = to_int(
+            cfg.toolTimeout, default=self._default_timeout, minimum=1
         )
         self._states[server_name] = state
         return state
 
     def snapshot(self) -> dict[str, MCPServerSnapshot]:
         return {
-            name: {
-                "status": state.status,
-                "last_error": state.last_error,
-                "consecutive_failures": state.consecutive_failures,
-                "last_connected_at": state.last_connected_at,
-                "tool_count": state.tool_count,
-                "next_retry_at": state.next_retry_at,
-                "config": {
-                    "connect_timeout_ms": state.connect_timeout_ms,
-                    "max_retries": state.max_retries,
-                    "retry_initial_ms": state.retry_initial_ms,
-                    "retry_max_ms": state.retry_max_ms,
-                    "failure_threshold": state.failure_threshold,
-                    "cooldown_sec": state.cooldown_sec,
-                    "tool_timeout_sec": state.tool_timeout_sec,
-                },
-            }
+            name: MCPServerSnapshot(
+                status=state.status,
+                last_error=state.last_error,
+                consecutive_failures=state.consecutive_failures,
+                last_connected_at=state.last_connected_at,
+                tool_count=state.tool_count,
+                next_retry_at=state.next_retry_at,
+                config=MCPServerSnapshotConfig(
+                    connect_timeout_ms=state.connect_timeout_ms,
+                    max_retries=state.max_retries,
+                    retry_initial_ms=state.retry_initial_ms,
+                    retry_max_ms=state.retry_max_ms,
+                    failure_threshold=state.failure_threshold,
+                    cooldown_sec=state.cooldown_sec,
+                    tool_timeout_sec=state.tool_timeout_sec,
+                ),
+            )
             for name, state in self._states.items()
         }
 
@@ -211,19 +207,19 @@ class MCPManager:
                 await attempt_stack.__aenter__()
                 attempt_ok = False
                 try:
-                    if cfg.get("command"):
+                    if cfg.command:
                         params = StdioServerParameters(
-                            command=cfg["command"],
-                            args=cfg.get("args", []),
-                            env=cfg.get("env") or None,
+                            command=cfg.command,
+                            args=cfg.args or [],
+                            env=cfg.env or None,
                         )
                         read, write = await asyncio.wait_for(
                             attempt_stack.enter_async_context(stdio_client(params)),
                             timeout=state.connect_timeout_ms / 1000,
                         )
-                    elif cfg.get("url"):
-                        remote_url = str(cfg["url"])
-                        headers = cfg.get("headers") or None
+                    elif cfg.url:
+                        remote_url = str(cfg.url)
+                        headers = cfg.headers or None
                         read = None
                         write = None
                         transport_errors: list[BaseException] = []

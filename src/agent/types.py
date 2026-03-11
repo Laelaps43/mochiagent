@@ -3,17 +3,16 @@ Agent Framework Core Types
 定义框架中使用的所有核心类型
 """
 
-from dataclasses import dataclass, field
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from enum import Enum
 import time
-from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
-from typing_extensions import TypedDict
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    from agent.core.message.message import SerializedMessageData
+from agent.core.utils import to_non_negative_int
 
 
 class MessageRole(str, Enum):
@@ -25,15 +24,15 @@ class MessageRole(str, Enum):
     TOOL = "tool"
 
 
-class ToolFunctionPayload(TypedDict):
-    name: str
-    arguments: str
+class ToolFunctionPayload(BaseModel):
+    name: str = ""
+    arguments: str = ""
 
 
-class ToolCallPayload(TypedDict):
-    id: str
-    type: Literal["function"]
-    function: ToolFunctionPayload
+class ToolCallPayload(BaseModel):
+    id: str = ""
+    type: Literal["function"] = "function"
+    function: ToolFunctionPayload = Field(default_factory=ToolFunctionPayload)
 
 
 class Message(BaseModel):
@@ -64,44 +63,7 @@ class ToolResult(BaseModel):
 ContextBudgetSource = Literal["estimated", "provider"]
 
 
-@dataclass
-class ContextBudgetData:
-    total_tokens: int | None
-    used_tokens: int
-    remaining_tokens: int | None
-    input_tokens: int
-    output_tokens: int
-    reasoning_tokens: int
-    source: ContextBudgetSource
-    updated_at_ms: int
-
-
-@dataclass
-class SessionMetadataData:
-    session_id: str
-    state: str
-    model_profile_id: str
-    agent_name: str
-    context_budget: ContextBudgetData
-    created_at: str
-    updated_at: str
-
-
-@dataclass
-class SessionData:
-    session_id: str
-    state: str
-    model_profile_id: str
-    agent_name: str
-    context_budget: ContextBudgetData
-    message_count: int
-    messages: list["SerializedMessageData"]
-    created_at: str
-    updated_at: str
-
-
-@dataclass(slots=True)
-class ContextBudget:
+class ContextBudget(BaseModel):
     """上下文窗口预算快照"""
 
     total_tokens: int | None = None
@@ -111,42 +73,112 @@ class ContextBudget:
     output_tokens: int = 0
     reasoning_tokens: int = 0
     source: ContextBudgetSource = "estimated"
-    updated_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
+    updated_at_ms: int = Field(default_factory=lambda: int(time.time() * 1000))
 
-    def to_dict(self) -> ContextBudgetData:
-        return ContextBudgetData(
-            total_tokens=self.total_tokens,
-            used_tokens=self.used_tokens,
-            remaining_tokens=self.remaining_tokens,
-            input_tokens=self.input_tokens,
-            output_tokens=self.output_tokens,
-            reasoning_tokens=self.reasoning_tokens,
-            source=self.source,
-            updated_at_ms=self.updated_at_ms,
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | "ContextBudget | None") -> "ContextBudget":
+        if data is None:
+            return cls.zero()
+        if isinstance(data, ContextBudget):
+            return data
+        total = to_non_negative_int(data.get("total_tokens")) if data.get("total_tokens") is not None else None
+        input_t = to_non_negative_int(data.get("input_tokens"))
+        output_t = to_non_negative_int(data.get("output_tokens"))
+        reasoning_t = to_non_negative_int(data.get("reasoning_tokens"))
+        used = input_t + output_t + reasoning_t
+        if total is None:
+            remaining = to_non_negative_int(data.get("remaining_tokens")) if data.get("remaining_tokens") is not None else None
+        else:
+            remaining = max(total - used, 0)
+        return cls(
+            total_tokens=total,
+            used_tokens=used,
+            remaining_tokens=remaining,
+            input_tokens=input_t,
+            output_tokens=output_t,
+            reasoning_tokens=reasoning_t,
+            source=data.get("source", "estimated"),
+            updated_at_ms=to_non_negative_int(data.get("updated_at_ms"), default=int(time.time() * 1000)),
         )
 
+    @staticmethod
+    def zero() -> "ContextBudget":
+        return ContextBudget()
 
-class TokenUsage(TypedDict):
-    input: int
-    output: int
-    reasoning: int
+    def update(
+        self,
+        *,
+        total_tokens: int | None,
+        input_tokens: int,
+        output_tokens: int,
+        reasoning_tokens: int,
+        source: ContextBudgetSource,
+        updated_at_ms: int | None = None,
+    ) -> "ContextBudget":
+        self.total_tokens = to_non_negative_int(total_tokens) if total_tokens is not None else None
+        self.input_tokens = to_non_negative_int(input_tokens)
+        self.output_tokens = to_non_negative_int(output_tokens)
+        self.reasoning_tokens = to_non_negative_int(reasoning_tokens)
+        self.used_tokens = self.input_tokens + self.output_tokens + self.reasoning_tokens
+        if self.total_tokens is None:
+            self.remaining_tokens = None
+        else:
+            self.remaining_tokens = max(self.total_tokens - self.used_tokens, 0)
+        self.source = "provider" if source == "provider" else "estimated"
+        self.updated_at_ms = updated_at_ms if updated_at_ms is not None else int(time.time() * 1000)
+        return self
 
 
+class SessionMetadataData(BaseModel):
+    session_id: str
+    state: str
+    model_profile_id: str
+    agent_name: str
+    context_budget: ContextBudget
+    created_at: str
+    updated_at: str
 
-class LLMStreamChunk(TypedDict, total=False):
-    content: str
-    thinking: str
-    tool_calls: List[ToolCallPayload]
-    finish_reason: str
-    usage: Dict[str, Any]
+
+class SessionData(BaseModel):
+    session_id: str
+    state: str
+    model_profile_id: str
+    agent_name: str
+    context_budget: ContextBudget
+    message_count: int
+    messages: list[Any] 
+    created_at: str
+    updated_at: str
 
 
-class LLMMessage(TypedDict, total=False):
-    role: str
-    content: str
-    tool_calls: List[ToolCallPayload]
-    tool_call_id: str
-    name: str
+class TokenUsage(BaseModel):
+    input: int = 0
+    output: int = 0
+    reasoning: int = 0
+
+
+class ProviderUsage(BaseModel):
+    """LLM 供应商返回的 token 用量（统一命名，由 adapter 负责映射）"""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+
+
+class LLMStreamChunk(BaseModel):
+    content: str = ""
+    thinking: str = ""
+    tool_calls: List[ToolCallPayload] = Field(default_factory=list)
+    finish_reason: str = ""
+    usage: Optional[ProviderUsage] = None
+
+
+class LLMMessage(BaseModel):
+    role: str = ""
+    content: str = ""
+    tool_calls: List[ToolCallPayload] = Field(default_factory=list)
+    tool_call_id: str = ""
+    name: str = ""
 
 
 class SessionState(str, Enum):
@@ -164,38 +196,37 @@ class EventType(str, Enum):
     """事件类型"""
 
     # 会话事件
-    SESSION_CREATED = "session.created"  # 会话已创建（内部通知）
+    SESSION_CREATED = "session.created"
     SESSION_STATE_CHANGED = "session.state_changed"
-    SESSION_AGENT_SWITCHED = "session.agent_switched"  # Agent 切换
+    SESSION_AGENT_SWITCHED = "session.agent_switched"
     SESSION_TERMINATED = "session.terminated"
 
     # 消息事件
-    MESSAGE_RECEIVED = "message.received"  # 接收用户消息
-    PART_CREATED = "part.created"  # Part 创建（流式发送 Part）
-    MESSAGE_DONE = "message.done"  # 消息完成
+    MESSAGE_RECEIVED = "message.received"
+    PART_CREATED = "part.created"
+    MESSAGE_DONE = "message.done"
 
     # 错误事件
     LLM_ERROR = "llm.error"
     LLM_THINKING = "llm.thinking"
 
 
-@dataclass(slots=True)
-class Event:
-    """运行时事件对象（热路径使用轻量 dataclass）"""
+class Event(BaseModel):
+    """运行时事件对象"""
 
     type: EventType
     session_id: str
-    data: Dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    data: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMConfig(BaseModel):
     """LLM配置"""
 
-    adapter: str  # openai_compatible, anthropic, etc.
-    provider: str  # openai, zhipu, kimi, etc.
-    model: str  # gpt-4, claude-3-sonnet, etc.
+    adapter: str
+    provider: str
+    model: str
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     temperature: float = 0.7
@@ -204,6 +235,7 @@ class LLMConfig(BaseModel):
     stream: bool = True
     timeout: int = 60
     openai_max_retries: Optional[int] = None
+    max_overflow_retries: int = 3
     extra_params: Dict[str, Any] = Field(default_factory=dict)
 
 

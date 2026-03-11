@@ -12,23 +12,18 @@ from loguru import logger
 from agent.types import (
     ContextBudget,
     ContextBudgetSource,
-    Message as ChatMessage,
     SessionData,
     SessionMetadataData,
     SessionState,
+    TokenUsage,
 )
 from agent.constants import UUID_PREFIX_LENGTH
-from .context_budget_utils import (
-    update_context_budget_from_raw,
-    update_context_budget_values,
-)
 from agent.core.message import (
     Message,
     UserMessageInfo,
     AssistantMessageInfo,
     Part,
     UserInput,
-    create_part_from_user_input,
 )
 
 
@@ -69,13 +64,10 @@ class SessionContext:
             info=UserMessageInfo(
                 id=message_id,
                 session_id=self.session_id,
-                time={"created": int(time.time() * 1000)},
+                created_at=int(time.time() * 1000),
                 agent=self.agent_name,
             ),
-            parts=[
-                create_part_from_user_input(part_data, self.session_id, message_id)
-                for part_data in parts
-            ],
+            parts=[part.to_part(self.session_id, message_id) for part in parts],
         )
         self.messages.append(message)
         self.updated_at = datetime.now(tz=timezone.utc)
@@ -94,7 +86,7 @@ class SessionContext:
                 id=message_id,
                 session_id=self.session_id,
                 parent_id=parent_id,
-                time={"created": int(time.time() * 1000)},
+                created_at=int(time.time() * 1000),
                 agent=self.agent_name,
                 model_id=model_id,
                 provider_id=provider_id,
@@ -110,17 +102,17 @@ class SessionContext:
         if self.current_message:
             self.current_message.add_part(part)
             self.updated_at = datetime.now(tz=timezone.utc)
+        else:
+            logger.warning("add_part_to_current called but no current_message exists, part dropped: {}", type(part).__name__)
 
     def finish_current_message(
         self,
-        cost: float = 0.0,
-        tokens: Optional[Dict[str, Any]] = None,
+        tokens: Optional[TokenUsage] = None,
         finish: str = "stop",
     ) -> None:
         if self.current_message and isinstance(self.current_message.info, AssistantMessageInfo):
-            self.current_message.info.time["completed"] = int(time.time() * 1000)
-            self.current_message.info.cost = cost
-            self.current_message.info.tokens = tokens or {}
+            self.current_message.info.completed_at = int(time.time() * 1000)
+            self.current_message.info.tokens = tokens or TokenUsage()
             self.current_message.info.finish = finish
             self.current_message = None
             self.updated_at = datetime.now(tz=timezone.utc)
@@ -149,8 +141,7 @@ class SessionContext:
         reasoning_tokens: int,
         source: ContextBudgetSource,
     ) -> ContextBudget:
-        self.context_budget = update_context_budget_values(
-            self.context_budget,
+        self.context_budget.update(
             total_tokens=total_tokens,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -160,12 +151,6 @@ class SessionContext:
         self.updated_at = datetime.now(tz=timezone.utc)
         return self.context_budget
 
-    def get_llm_messages(self) -> List[ChatMessage]:
-        llm_messages: List[ChatMessage] = []
-        for message in self.messages:
-            llm_messages.extend(message.to_llm_messages())
-        return llm_messages
-
     @property
     def metadata(self) -> SessionMetadataData:
         """会话元数据快照（不含消息历史）"""
@@ -174,7 +159,7 @@ class SessionContext:
             state=self.state.value,
             model_profile_id=self.model_profile_id,
             agent_name=self.agent_name,
-            context_budget=self.context_budget.to_dict(),
+            context_budget=self.context_budget,
             created_at=self.created_at.isoformat(),
             updated_at=self.updated_at.isoformat(),
         )
@@ -187,9 +172,9 @@ class SessionContext:
             state=self.state.value,
             model_profile_id=self.model_profile_id,
             agent_name=self.agent_name,
-            context_budget=self.context_budget.to_dict(),
+            context_budget=self.context_budget,
             message_count=len(self.messages),
-            messages=[msg.to_dict() for msg in self.messages],
+            messages=[msg.model_dump(mode="json") for msg in self.messages],
             created_at=self.created_at.isoformat(),
             updated_at=self.updated_at.isoformat(),
         )
@@ -201,7 +186,7 @@ class SessionContext:
             model_profile_id=data.model_profile_id or "",
             agent_name=data.agent_name,
         )
-        update_context_budget_from_raw(context.context_budget, data.context_budget)
+        context.context_budget = ContextBudget.from_dict(data.context_budget)
         context.state = SessionState(data.state)
         context.created_at = datetime.fromisoformat(data.created_at)
         context.updated_at = datetime.fromisoformat(data.updated_at)
@@ -209,7 +194,7 @@ class SessionContext:
         # 如果是 SessionData（包含 messages）
         if isinstance(data, SessionData):
             context.messages.extend(
-                Message.from_dict(msg_data) for msg_data in data.messages
+                Message.model_validate(msg_data) for msg_data in data.messages
             )
 
         return context
