@@ -99,8 +99,8 @@ class AgentEventLoop:
             context = await self.session_manager.get_session(session_id)
             if context.current_message:
                 message_id = context.current_message.message_id
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to retrieve session context for error event: {}", exc)
 
         await self._emit_event(
             Event(
@@ -250,8 +250,12 @@ class AgentEventLoop:
                         tokens=TokenUsage(),
                         finish="error",
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "Failed to finalize assistant message on error for session {}: {}",
+                    session_id,
+                    exc,
+                )
             raise
 
         finally:
@@ -259,8 +263,8 @@ class AgentEventLoop:
                 ctx = await self.session_manager.get_session(session_id)
                 if ctx.state != SessionState.ERROR:
                     await self.session_manager.update_state(session_id, SessionState.IDLE)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to reset session {} state to IDLE: {}", session_id, exc)
 
     async def _execute_tools(
         self, session_id: str, tool_calls: list[ToolCallPayload]

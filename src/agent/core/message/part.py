@@ -82,7 +82,6 @@ class TextPart(PartBase):
         return {"type": "text", "content": self.text}
 
 
-
 # ============ ReasoningPart - AI 思考过程 ============
 
 
@@ -98,7 +97,6 @@ class ReasoningPart(PartBase):
     def to_llm_format(self) -> dict[str, object] | None:
         """思考过程不发送给 LLM（内部数据）"""
         return None
-
 
 
 # ============ ToolPart - 工具调用 ============
@@ -326,7 +324,6 @@ class ToolPart(PartBase):
             }
 
         return result if len(result) > 1 else None  # 只有 type 时返回 None
-
 
 
 # ============ Part Union Type ============

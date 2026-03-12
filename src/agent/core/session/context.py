@@ -114,6 +114,13 @@ class SessionContext:
                 return idx
         return None
 
+    def apply_compaction(self, bookmark: Message, insert_idx: int) -> None:
+        """将压缩书签插入消息列表并删除被压缩的旧消息。"""
+        self.messages.insert(insert_idx, bookmark)
+        del self.messages[:insert_idx]
+        self.last_compaction_message_id = bookmark.message_id
+        self.updated_at = datetime.now(tz=timezone.utc)
+
     def add_part_to_current(self, part: Part) -> None:
         if self.current_message:
             self.current_message.add_part(part)

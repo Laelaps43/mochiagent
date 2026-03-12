@@ -38,6 +38,7 @@ Issues = "https://github.com/Laelaps43/mochiagent/issues"
 
 [project.optional-dependencies]
 dev = [
+    "basedpyright>=1.38.2",
     "pytest>=7.4.4",
     "pytest-asyncio>=0.23.3",
     "ruff>=0.14.11",
@@ -62,6 +63,4 @@ typeCheckingMode = "recommended"
 reportMissingTypeStubs = false
 
 [dependency-groups]
-dev = [
-    "basedpyright>=1.38.2",
-]
+dev = []

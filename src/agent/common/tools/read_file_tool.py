@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import override
 
@@ -72,12 +73,15 @@ class ReadFileTool(Tool):
         else:
             safe_limit = max(1, max_chars)
 
-        # 按需读取，避免大文件全量加载
-        with file_path.open("r", encoding=encoding) as f:
-            if safe_offset > 0:
-                _ = f.read(safe_offset)
-            chunk = f.read(safe_limit)
-            eof = f.read(1) == ""
+        def _read() -> tuple[str, bool]:
+            with file_path.open("r", encoding=encoding) as f:
+                if safe_offset > 0:
+                    _ = f.read(safe_offset)
+                data = f.read(safe_limit)
+                is_eof = f.read(1) == ""
+            return data, is_eof
+
+        chunk, eof = await asyncio.to_thread(_read)
 
         next_offset = safe_offset + len(chunk)
         truncated = not eof

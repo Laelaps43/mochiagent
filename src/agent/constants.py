@@ -20,8 +20,8 @@ OPENAI_MAX_RETRIES = 2
 
 # ============ ID 生成配置 ============
 
-# UUID 前缀截取长度
-UUID_PREFIX_LENGTH = 8
+# UUID 前缀截取长度（16 hex = 64-bit，碰撞概率极低）
+UUID_PREFIX_LENGTH = 16
 
 
 # ============ 并发控制 ============

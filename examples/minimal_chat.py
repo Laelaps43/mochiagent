@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from typing import cast, override
 
+from pydantic import SecretStr
+
 from agent import (
     BaseAgent,
     Event,
@@ -74,7 +76,7 @@ async def run_once(prompt: str) -> None:
         adapter="openai_compatible",
         provider="openai",
         model=model,
-        api_key=api_key,
+        api_key=SecretStr(api_key),
         base_url=base_url,
         stream=True,
         openai_max_retries=2,

@@ -100,17 +100,9 @@ class SessionManager:
         # 保存到存储
         await self.storage.save_session(session_id, context.metadata)
 
-        # 加入缓存（双重检查）
-        async with self._cache_lock:
-            # 如果已在缓存中，说明其他协程已创建，直接返回已有的
-            if session_id in self._cache:
-                logger.warning(
-                    f"Session {session_id} already in cache during creation, using existing"
-                )
-                return self._cache[session_id]
-
-            self._cache[session_id] = context
-            self._state_machines[session_id] = state_machine
+        # 加入缓存（调用方应持有 _cache_lock）
+        self._cache[session_id] = context
+        self._state_machines[session_id] = state_machine
 
         # 发布事件
         await self.bus.publish(
@@ -136,7 +128,7 @@ class SessionManager:
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        # 在锁内检查是否已存在，避免 TOCTOU 竞态
+        # 在锁内检查并创建，避免 TOCTOU 竞态
         async with self._cache_lock:
             if session_id in self._cache:
                 raise ValueError(f"Session {session_id} already exists in cache")
@@ -144,25 +136,24 @@ class SessionManager:
             if await self.storage.session_exists(session_id):
                 raise ValueError(f"Session {session_id} already exists in storage")
 
-        try:
-            return await self._create_and_save_session(session_id, model_profile_id, agent_name)
+            try:
+                return await self._create_and_save_session(session_id, model_profile_id, agent_name)
 
-        except Exception as e:
-            # 回滚：如果保存失败，确保缓存中也没有
-            async with self._cache_lock:
+            except Exception as e:
+                # 回滚：如果保存失败，确保缓存中也没有
                 if session_id in self._cache:
                     del self._cache[session_id]
                 if session_id in self._state_machines:
                     del self._state_machines[session_id]
 
-            # 尝试清理存储
-            try:
-                await self.storage.delete_session(session_id)
-            except Exception:
-                pass
+                # 尝试清理存储
+                try:
+                    await self.storage.delete_session(session_id)
+                except Exception:
+                    logger.warning(f"Failed to cleanup storage for session {session_id}")
 
-            logger.error(f"Failed to create session {session_id}: {e}")
-            raise
+                logger.error(f"Failed to create session {session_id}: {e}")
+                raise
 
     async def get_session(self, session_id: str) -> SessionContext:
         """获取会话（带缓存和延迟加载）"""
@@ -227,21 +218,20 @@ class SessionManager:
                     logger.info(f"Loaded session from storage: {session_id}")
                     return context
 
-        # 在锁外创建新会话
-        try:
-            logger.info(f"Creating new session {session_id}")
-            return await self._create_and_save_session(session_id, model_profile_id, agent_name)
+            # 4. 在锁内创建新会话，避免 TOCTOU 竞态
+            try:
+                logger.info(f"Creating new session {session_id}")
+                return await self._create_and_save_session(session_id, model_profile_id, agent_name)
 
-        except Exception as e:
-            # 回滚
-            async with self._cache_lock:
+            except Exception as e:
+                # 回滚
                 if session_id in self._cache:
                     del self._cache[session_id]
                 if session_id in self._state_machines:
                     del self._state_machines[session_id]
 
-            logger.error(f"Failed to save session {session_id}: {e}")
-            raise
+                logger.error(f"Failed to save session {session_id}: {e}")
+                raise
 
     async def _refresh_model_profile_if_needed(
         self,

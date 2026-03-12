@@ -64,7 +64,7 @@ class OpenAIAdapter(LLMProvider):
             else config.openai_max_retries
         )
         self.client: AsyncOpenAI = AsyncOpenAI(
-            api_key=config.api_key,
+            api_key=config.api_key.get_secret_value() if config.api_key else None,
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=self.openai_max_retries,
@@ -330,9 +330,9 @@ class OpenAIAdapter(LLMProvider):
                 has_data = True
 
             # reasoning_content / reasoning 是部分厂商（DeepSeek 等）的扩展字段
-            reasoning_content: object | None = getattr(
-                delta, "reasoning_content", None
-            ) or getattr(delta, "reasoning", None)
+            reasoning_content: object | None = getattr(delta, "reasoning_content", None) or getattr(
+                delta, "reasoning", None
+            )
             if reasoning_content:
                 result.thinking = str(reasoning_content)
                 has_data = True

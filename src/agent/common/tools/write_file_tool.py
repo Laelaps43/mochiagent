@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import override
 
@@ -47,8 +48,12 @@ class WriteFileTool(Tool):
         file_path = Path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         mode = "a" if append else "w"
-        with file_path.open(mode, encoding=encoding) as f:
-            _ = f.write(content)
+
+        def _write() -> None:
+            with file_path.open(mode, encoding=encoding) as f:
+                _ = f.write(content)
+
+        await asyncio.to_thread(_write)
         return {
             "success": True,
             "path": str(file_path),

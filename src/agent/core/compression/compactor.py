@@ -114,9 +114,7 @@ class ContextCompactor(ABC):
                 compacted_count=insert_idx,
                 compaction_metadata=decision.metadata,
             )
-            session_context.messages.insert(insert_idx, bookmark)
-            del session_context.messages[:insert_idx]
-            session_context.last_compaction_message_id = bookmark.message_id
+            session_context.apply_compaction(bookmark, insert_idx)
 
             # 压缩完成
             if emit_event:

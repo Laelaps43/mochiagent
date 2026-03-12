@@ -10,7 +10,7 @@ from enum import Enum
 import time
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from agent.core.utils import to_non_negative_int
 
@@ -202,7 +202,7 @@ class LLMConfig(BaseModel):
     adapter: str
     provider: str
     model: str
-    api_key: str | None = None
+    api_key: SecretStr | None = None
     base_url: str | None = None
     temperature: float = 0.7
     max_tokens: int | None = None

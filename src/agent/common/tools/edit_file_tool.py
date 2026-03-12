@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import override
 
@@ -66,31 +67,34 @@ class EditFileTool(Tool):
         if file_path.is_dir():
             return {"success": False, "error": f"Path is a directory: {path}"}
 
-        original = file_path.read_text(encoding=encoding)
+        def _edit() -> dict[str, object]:
+            original = file_path.read_text(encoding=encoding)
 
-        if content is not None:
-            updated = content
-            replacements = 1
-        else:
-            if old_string is None or new_string is None:
-                return {
-                    "success": False,
-                    "error": "Either provide content, or provide old_string and new_string.",
-                }
-
-            if replace_all:
-                replacements = original.count(old_string)
-                updated = original.replace(old_string, new_string)
+            if content is not None:
+                updated = content
+                count = 1
             else:
-                replacements = 1 if old_string in original else 0
-                updated = original.replace(old_string, new_string, 1)
+                if old_string is None or new_string is None:
+                    return {
+                        "success": False,
+                        "error": "Either provide content, or provide old_string and new_string.",
+                    }
 
-            if replacements == 0:
-                return {"success": False, "error": "old_string not found in file"}
+                if replace_all:
+                    count = original.count(old_string)
+                    updated = original.replace(old_string, new_string)
+                else:
+                    count = 1 if old_string in original else 0
+                    updated = original.replace(old_string, new_string, 1)
 
-        _ = file_path.write_text(updated, encoding=encoding)
-        return {
-            "success": True,
-            "path": str(file_path),
-            "replacements": replacements,
-        }
+                if count == 0:
+                    return {"success": False, "error": "old_string not found in file"}
+
+            _ = file_path.write_text(updated, encoding=encoding)
+            return {
+                "success": True,
+                "path": str(file_path),
+                "replacements": count,
+            }
+
+        return await asyncio.to_thread(_edit)

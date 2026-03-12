@@ -37,7 +37,9 @@ class ToolSecurityConfig(BaseModel):
 
     enforce_workspace: bool = True
     enforce_command_guard: bool = True
-    command_deny_tokens: set[str] = Field(default_factory=lambda: {"`", "$(", "\n", "\r"})
+    command_deny_tokens: set[str] = Field(
+        default_factory=lambda: {"`", "$(", "\n", "\r", ";", "&&", "||", "|", ">", ">>", "<"}
+    )
 
 
 class ToolRuntimeConfig(BaseModel):

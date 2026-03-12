@@ -85,12 +85,8 @@ class ToolSecurityGuard:
 
         deny_tokens = self.config.command_deny_tokens or set()
         if deny_tokens:
-            try:
-                cmd_tokens = shlex.split(command, posix=True)
-            except ValueError:
-                cmd_tokens = command.split()
             for deny_token in deny_tokens:
-                if deny_token in cmd_tokens:
+                if deny_token in command:
                     return SecurityDecision(
                         allowed=False,
                         reason=f"command contains denied token: {deny_token!r}",

@@ -379,18 +379,15 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "basedpyright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "basedpyright" },
-]
-
 [package.metadata]
 requires-dist = [
+    { name = "basedpyright", marker = "extra == 'dev'", specifier = ">=1.38.2" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "loguru", specifier = ">=0.7.3" },
@@ -407,7 +404,7 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "basedpyright", specifier = ">=1.38.2" }]
+dev = []
 
 [[package]]
 name = "nodejs-wheel-binaries"

@@ -67,7 +67,7 @@ class MessageBus:
 
     async def _handle_event(self, event: Event) -> None:
         try:
-            handlers = self._subscribers.get(event.type, [])
+            handlers = list(self._subscribers.get(event.type, []))
             if handlers:
                 tasks = [handler(event) for handler in handlers]
                 results = await asyncio.gather(*tasks, return_exceptions=True)

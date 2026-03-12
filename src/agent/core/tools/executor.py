@@ -16,6 +16,9 @@ from .security_guard import ToolSecurityConfig, ToolSecurityGuard
 from agent.types import ToolCallPayload, ToolResult
 
 
+_DEFAULT_MAX_BATCH_CONCURRENCY = 10
+
+
 class ToolExecutor:
     """
     工具执行器
@@ -32,6 +35,7 @@ class ToolExecutor:
         workspace_root: str | Path | None = None,
         restrict_to_workspace: bool = True,
         security: ToolSecurityConfig | None = None,
+        max_batch_concurrency: int = _DEFAULT_MAX_BATCH_CONCURRENCY,
     ):
         """
         初始化工具执行器
@@ -53,6 +57,7 @@ class ToolExecutor:
             restrict=restrict_to_workspace,
             config=security or ToolSecurityConfig(),
         )
+        self._batch_semaphore: asyncio.Semaphore = asyncio.Semaphore(max_batch_concurrency)
         logger.info(f"ToolExecutor initialized (timeout={default_timeout}s)")
 
     async def execute(self, tool_call: ToolCallPayload) -> ToolResult:
@@ -188,7 +193,11 @@ class ToolExecutor:
 
         logger.info(f"Executing {len(tool_calls)} tool calls in parallel")
 
-        tasks = [self.execute(tool_call) for tool_call in tool_calls]
+        async def _limited_execute(tc: ToolCallPayload) -> ToolResult:
+            async with self._batch_semaphore:
+                return await self.execute(tc)
+
+        tasks = [_limited_execute(tool_call) for tool_call in tool_calls]
 
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
