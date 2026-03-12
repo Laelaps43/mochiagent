@@ -47,6 +47,8 @@ class SessionManager:
         self._cache_lock: asyncio.Lock = asyncio.Lock()
 
         self._session_listeners: dict[str, list[Callable[[Event], Awaitable[None]]]] = {}
+        self._listener_tasks: dict[str, asyncio.Task[None]] = {}
+        self._listener_tasks_lock: asyncio.Lock = asyncio.Lock()
 
         logger.info(f"SessionManager initialized with {self.storage.__class__.__name__}")
 
@@ -264,6 +266,15 @@ class SessionManager:
         # 2. 存储操作在锁外执行（避免阻塞其他操作）
         await self.storage.delete_session(session_id)
 
+        async with self._listener_tasks_lock:
+            listener_task = self._listener_tasks.pop(session_id, None)
+        if listener_task and not listener_task.done():
+            _ = listener_task.cancel()
+            try:
+                await listener_task
+            except asyncio.CancelledError:
+                pass
+
         # 3. 发送终止事件（在锁外执行）
         await self.bus.publish(
             Event(
@@ -408,18 +419,39 @@ class SessionManager:
         if not listeners:
             return
 
-        # 并发调用所有监听器
-        results = await asyncio.gather(
-            *[listener(event) for listener in listeners], return_exceptions=True
-        )
+        async def _deliver(previous: asyncio.Task[None] | None) -> None:
+            if previous is not None:
+                try:
+                    await previous
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
 
-        # 记录错误
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(
-                    f"Session listener {i} failed for session {session_id}: {result}",
-                    exc_info=result,
-                )
+            results = await asyncio.gather(
+                *[listener(event) for listener in listeners], return_exceptions=True
+            )
+
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(
+                        f"Session listener {i} failed for session {session_id}: {result}",
+                        exc_info=result,
+                    )
+
+        async with self._listener_tasks_lock:
+            previous = self._listener_tasks.get(session_id)
+            task = asyncio.create_task(_deliver(previous))
+            self._listener_tasks[session_id] = task
+
+        def _cleanup(done_task: asyncio.Task[None]) -> None:
+            if not done_task.cancelled():
+                _ = done_task.exception()
+            current = self._listener_tasks.get(session_id)
+            if current is done_task:
+                _ = self._listener_tasks.pop(session_id, None)
+
+        task.add_done_callback(_cleanup)
 
     async def _on_state_change(self, session_id: str, from_state: str, to_state: str) -> None:
         """

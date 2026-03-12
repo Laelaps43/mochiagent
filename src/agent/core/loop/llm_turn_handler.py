@@ -32,6 +32,7 @@ from agent.types import (
     EventType,
     LLMConfig,
     ProviderUsage,
+    SessionState,
     TokenUsage,
     ToolCallPayload,
 )
@@ -118,6 +119,7 @@ class LLMTurnHandler:
         while True:
             reasoning_buffer = ""
             reasoning_start_time = None
+            entered_streaming_state = False
             text_buffer = ""
             thinking_buffer = ""
             accumulated_tool_calls = []
@@ -137,6 +139,12 @@ class LLMTurnHandler:
                     messages=llm_messages,
                     tools=tools,
                 ):
+                    if not entered_streaming_state and (
+                        chunk.thinking or chunk.content or chunk.tool_calls or chunk.finish_reason
+                    ):
+                        await self.session_manager.update_state(session_id, SessionState.STREAMING)
+                        entered_streaming_state = True
+
                     if chunk.thinking:
                         reasoning_buffer += chunk.thinking
                         thinking_buffer += chunk.thinking
