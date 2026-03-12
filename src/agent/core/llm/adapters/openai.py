@@ -8,7 +8,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, AsyncIterator, NoReturn, Optional
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Awaitable
+from typing import NoReturn, cast, override
 
 from loguru import logger
 from openai import AsyncOpenAI
@@ -23,18 +24,25 @@ from agent.core.llm.errors import (
     LLMTransportError,
 )
 from agent.core.security import redact_text
-from agent.types import LLMConfig, LLMStreamChunk, ProviderUsage, ToolCallPayload, ToolDefinition, ToolFunctionPayload
-
-try:
-    from openai import RateLimitError
-except Exception:  # pragma: no cover
-
-    class RateLimitError(Exception):
-        pass
+from agent.types import (
+    LLMConfig,
+    LLMStreamChunk,
+    ProviderUsage,
+    ToolCallPayload,
+    ToolDefinition,
+    ToolFunctionPayload,
+)
 
 
 class _ResponseMeta:
-    __slots__ = ("status_code", "content_type", "x_log_id", "provider_code", "provider_message", "response_body")
+    __slots__: tuple[str, ...] = (
+        "status_code",
+        "content_type",
+        "x_log_id",
+        "provider_code",
+        "provider_message",
+        "response_body",
+    )
 
     def __init__(
         self,
@@ -45,12 +53,31 @@ class _ResponseMeta:
         provider_message: str | None = None,
         response_body: str | None = None,
     ) -> None:
-        self.status_code = status_code
-        self.content_type = content_type
-        self.x_log_id = x_log_id
-        self.provider_code = provider_code
-        self.provider_message = provider_message
-        self.response_body = response_body
+        self.status_code: int | None = status_code
+        self.content_type: str | None = content_type
+        self.x_log_id: str | None = x_log_id
+        self.provider_code: str | None = provider_code
+        self.provider_message: str | None = provider_message
+        self.response_body: str | None = response_body
+
+
+def _gstr(obj: object, attr: str, default: str = "") -> str:
+    val: object = cast(object, getattr(obj, attr, default))
+    return str(val) if val is not None else default
+
+
+def _gint(obj: object, attr: str, default: int = 0) -> int:
+    val: object = cast(object, getattr(obj, attr, default))
+    if val is None:
+        return default
+    try:
+        return int(str(val))
+    except (TypeError, ValueError):
+        return default
+
+
+def _gobj(obj: object, attr: str) -> object:
+    return cast(object, getattr(obj, attr, None))
 
 
 class OpenAIAdapter(LLMProvider):
@@ -61,8 +88,8 @@ class OpenAIAdapter(LLMProvider):
 
     def __init__(self, config: LLMConfig):
         super().__init__(config)
-        self.openai_max_retries = self._resolve_max_retries(config.openai_max_retries)
-        self.client = AsyncOpenAI(
+        self.openai_max_retries: int = self._resolve_max_retries(config.openai_max_retries)
+        self.client: AsyncOpenAI = AsyncOpenAI(
             api_key=config.api_key,
             base_url=config.base_url,
             timeout=config.timeout,
@@ -76,7 +103,7 @@ class OpenAIAdapter(LLMProvider):
         return configured_retries
 
     @staticmethod
-    def _prepare_tools(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
+    def _prepare_tools(tools: list[ToolDefinition]) -> list[dict[str, object]]:
         return [
             {
                 "type": "function",
@@ -95,9 +122,9 @@ class OpenAIAdapter(LLMProvider):
         messages: list[InternalMessage],
         tools: list[ToolDefinition] | None,
         stream: bool,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> dict[str, object]:
-        params: dict[str, Any] = {
+        params: dict[str, object] = {
             "model": self.config.model,
             "messages": self.prepare_messages(messages),
             "stream": stream,
@@ -118,31 +145,32 @@ class OpenAIAdapter(LLMProvider):
     def _extract_response_meta(exc: Exception) -> _ResponseMeta:
         meta = _ResponseMeta()
 
-        response = exc.response if hasattr(exc, "response") else None
+        response: object = cast(object, getattr(exc, "response", None))
         if response is None:
             return meta
 
         try:
-            meta.status_code = response.status_code if hasattr(response, "status_code") else None
-            headers = response.headers if hasattr(response, "headers") else {}
+            meta.status_code = cast("int | None", _gobj(response, "status_code"))
+            headers = cast(dict[str, str], _gobj(response, "headers") or {})
             meta.content_type = headers.get("content-type", "")
             meta.x_log_id = headers.get("x-log-id", "")
 
-            body_text = (response.text if hasattr(response, "text") else "") or ""
+            body_text: str = _gstr(response, "text")
             if body_text:
                 if len(body_text) > 1200:
                     body_text = body_text[:1200] + "...(truncated)"
                 meta.response_body = body_text
 
                 try:
-                    payload = json.loads(body_text)
-                    if isinstance(payload, dict):
-                        error_obj = payload.get("error")
-                        if isinstance(error_obj, dict):
-                            if error_obj.get("code") is not None:
-                                meta.provider_code = str(error_obj.get("code"))
-                            if error_obj.get("message"):
-                                meta.provider_message = redact_text(error_obj.get("message"))
+                    payload = cast("dict[str, object]", json.loads(body_text))
+                    error_obj = cast("dict[str, object] | None", payload.get("error"))
+                    if isinstance(error_obj, dict):
+                        code = error_obj.get("code")
+                        if code is not None:
+                            meta.provider_code = str(code)
+                        message = error_obj.get("message")
+                        if message:
+                            meta.provider_message = redact_text(str(message))
                 except Exception:
                     pass
         except Exception:
@@ -154,14 +182,12 @@ class OpenAIAdapter(LLMProvider):
         if isinstance(exc, LLMProviderError):
             return exc
 
-        context = {
-            "provider": self.config.provider,
-            "model": self.config.model,
-            "base_url": self.config.base_url,
-        }
+        provider = self.config.provider
+        model = self.config.model
+        base_url = self.config.base_url
 
         if isinstance(exc, KeyError):
-            missing_key = str(exc.args[0]) if exc.args else "unknown"
+            missing_key = str(cast(object, exc.args[0])) if exc.args else "unknown"
             is_stream = operation == "stream_chat"
             parse_subject = (
                 "OpenAI-compatible streaming parse failed "
@@ -187,7 +213,9 @@ class OpenAIAdapter(LLMProvider):
                     else "供应商返回了非标准响应包。建议重试，或切换更稳定的模型/网关。"
                 ),
                 retriable=True,
-                **context,
+                provider=provider,
+                model=model,
+                base_url=base_url,
             )
 
         meta = self._extract_response_meta(exc)
@@ -196,7 +224,10 @@ class OpenAIAdapter(LLMProvider):
         provider_message = meta.provider_message
         x_log_id = meta.x_log_id
 
-        if isinstance(exc, RateLimitError) or status_code == 429 or provider_code == "1302":
+        is_rate_limit = (
+            type(exc).__name__ == "RateLimitError" or status_code == 429 or provider_code == "1302"
+        )
+        if is_rate_limit:
             detail = provider_message or redact_text(str(exc))
             return LLMRateLimitError(
                 code="RATE_LIMITED",
@@ -210,7 +241,9 @@ class OpenAIAdapter(LLMProvider):
                 status_code=status_code,
                 provider_code=provider_code,
                 x_log_id=x_log_id,
-                **context,
+                provider=provider,
+                model=model,
+                base_url=base_url,
             )
 
         retriable = bool(
@@ -235,7 +268,9 @@ class OpenAIAdapter(LLMProvider):
             status_code=status_code,
             provider_code=provider_code,
             x_log_id=x_log_id,
-            **context,
+            provider=provider,
+            model=model,
+            base_url=base_url,
         )
 
     @staticmethod
@@ -270,11 +305,12 @@ class OpenAIAdapter(LLMProvider):
             redact_text(repr(exc)),
         )
 
-        response = exc.response if hasattr(exc, "response") else None
+        response: object = cast(object, getattr(exc, "response", None))
         if response is not None:
             try:
-                content_type = response.headers.get("content-type", "")
-                body_text = (response.text if hasattr(response, "text") else "") or ""
+                headers = cast(dict[str, str], _gobj(response, "headers") or {})
+                content_type: str = headers.get("content-type", "")
+                body_text: str = _gstr(response, "text")
                 if len(body_text) > 1200:
                     body_text = body_text[:1200] + "...(truncated)"
                 logger.error(
@@ -293,109 +329,122 @@ class OpenAIAdapter(LLMProvider):
 
     @staticmethod
     def _merge_tool_call_delta(
-        tool_call: Any,
+        tool_call: object,
         accumulated_tool_calls: dict[int, ToolCallPayload],
     ) -> None:
-        idx = tool_call.index if tool_call.index is not None else len(accumulated_tool_calls)
+        tc_index = _gobj(tool_call, "index")
+        idx = int(tc_index) if isinstance(tc_index, int) else len(accumulated_tool_calls)
         if idx not in accumulated_tool_calls:
             accumulated_tool_calls[idx] = ToolCallPayload()
 
         entry = accumulated_tool_calls[idx]
 
-        if tool_call.id:
-            entry.id = tool_call.id
+        tc_id = _gstr(tool_call, "id")
+        if tc_id:
+            entry.id = tc_id
 
-        if not tool_call.function:
+        tc_function = _gobj(tool_call, "function")
+        if not tc_function:
             return
 
-        if tool_call.function.name:
-            entry.function.name = tool_call.function.name
+        fn_name = _gstr(tc_function, "name")
+        if fn_name:
+            entry.function.name = fn_name
 
-        if tool_call.function.arguments:
-            entry.function.arguments += tool_call.function.arguments
+        fn_arguments = _gstr(tc_function, "arguments")
+        if fn_arguments:
+            entry.function.arguments += fn_arguments
 
     @staticmethod
     def _parse_stream_chunk(
-        chunk: Any,
+        chunk: object,
         accumulated_tool_calls: dict[int, ToolCallPayload],
     ) -> LLMStreamChunk | None:
-        choice = chunk.choices[0] if chunk.choices else None
+        choices = _gobj(chunk, "choices")
+        choice = cast(list[object], choices)[0] if choices else None
         if not choice:
             return None
 
         result = LLMStreamChunk()
-        delta = choice.delta
+        delta = _gobj(choice, "delta")
         has_data = False
 
-        if delta and delta.content:
-            result.content = delta.content
-            has_data = True
+        if delta:
+            delta_content = _gstr(delta, "content")
+            if delta_content:
+                result.content = delta_content
+                has_data = True
 
-        reasoning_content = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None) if delta else None
-        if reasoning_content:
-            result.thinking = reasoning_content
-            has_data = True
+            reasoning_content = _gobj(delta, "reasoning_content") or _gobj(delta, "reasoning")
+            if reasoning_content:
+                result.thinking = str(reasoning_content)
+                has_data = True
 
-        if delta and delta.tool_calls:
-            for tool_call in delta.tool_calls:
-                OpenAIAdapter._merge_tool_call_delta(tool_call, accumulated_tool_calls)
+            delta_tool_calls = _gobj(delta, "tool_calls")
+            if delta_tool_calls:
+                for tool_call in cast(list[object], delta_tool_calls):
+                    OpenAIAdapter._merge_tool_call_delta(tool_call, accumulated_tool_calls)
 
-        if choice.finish_reason:
-            result.finish_reason = choice.finish_reason
+        finish_reason = _gstr(choice, "finish_reason")
+        if finish_reason:
+            result.finish_reason = finish_reason
             has_data = True
             if accumulated_tool_calls:
                 ordered_calls = [accumulated_tool_calls[k] for k in sorted(accumulated_tool_calls)]
                 result.tool_calls = ordered_calls
-        usage = chunk.usage if hasattr(chunk, "usage") else None
+        usage = _gobj(chunk, "usage")
         if usage is not None:
-            details = getattr(usage, "completion_tokens_details", None)
+            details = _gobj(usage, "completion_tokens_details")
             result.usage = ProviderUsage(
-                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                reasoning_tokens=(getattr(details, "reasoning_tokens", 0) or 0) if details else 0,
+                input_tokens=_gint(usage, "prompt_tokens"),
+                output_tokens=_gint(usage, "completion_tokens"),
+                reasoning_tokens=_gint(details, "reasoning_tokens") if details else 0,
             )
             has_data = True
 
         return result if has_data else None
 
     @staticmethod
-    def _parse_complete_response(response: Any) -> LLMStreamChunk:
-        choice = response.choices[0]
-        message = choice.message
+    def _parse_complete_response(response: object) -> LLMStreamChunk:
+        choices = _gobj(response, "choices")
+        choice = cast(list[object], choices)[0] if choices else None
+        message = _gobj(choice, "message")
         result = LLMStreamChunk(
-            content=message.content or "",
-            finish_reason=choice.finish_reason,
+            content=_gstr(message, "content"),
+            finish_reason=_gstr(choice, "finish_reason"),
         )
 
-        if message.tool_calls:
+        message_tool_calls = _gobj(message, "tool_calls")
+        if message_tool_calls:
             result.tool_calls = [
                 ToolCallPayload(
-                    id=tc.id,
+                    id=_gstr(tc, "id"),
                     function=ToolFunctionPayload(
-                        name=tc.function.name,
-                        arguments=tc.function.arguments,
+                        name=_gstr(_gobj(tc, "function"), "name"),
+                        arguments=_gstr(_gobj(tc, "function"), "arguments"),
                     ),
                 )
-                for tc in message.tool_calls
+                for tc in cast(list[object], message_tool_calls)
             ]
 
-        usage = getattr(response, "usage", None)
+        usage = _gobj(response, "usage")
         if usage is not None:
-            details = getattr(usage, "completion_tokens_details", None)
+            details = _gobj(usage, "completion_tokens_details")
             result.usage = ProviderUsage(
-                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                reasoning_tokens=(getattr(details, "reasoning_tokens", 0) or 0) if details else 0,
+                input_tokens=_gint(usage, "prompt_tokens"),
+                output_tokens=_gint(usage, "completion_tokens"),
+                reasoning_tokens=_gint(details, "reasoning_tokens") if details else 0,
             )
 
         return result
 
+    @override
     async def stream_chat(
         self,
         messages: list[InternalMessage],
         tools: list[ToolDefinition] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[LLMStreamChunk]:
+        **kwargs: object,
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
         params = self._build_request_params(
             messages=messages,
             tools=tools,
@@ -413,7 +462,9 @@ class OpenAIAdapter(LLMProvider):
         start_time = time.time()
 
         try:
-            response = await self.client.chat.completions.create(**params)
+            _create = cast(Callable[..., Awaitable[object]], self.client.chat.completions.create)
+            _response = await _create(**params)
+            response = cast(AsyncIterator[object], _response)
 
             first_chunk_time = None
             chunk_count = 0
@@ -444,11 +495,12 @@ class OpenAIAdapter(LLMProvider):
         except Exception as exc:
             self._raise_mapped_error("stream_chat", exc)
 
+    @override
     async def complete(
         self,
         messages: list[InternalMessage],
         tools: list[ToolDefinition] | None = None,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> LLMStreamChunk:
         params = self._build_request_params(
             messages=messages,
@@ -458,8 +510,9 @@ class OpenAIAdapter(LLMProvider):
         )
 
         try:
-            response = await self.client.chat.completions.create(**params)
-            return self._parse_complete_response(response)
+            _create = cast(Callable[..., Awaitable[object]], self.client.chat.completions.create)
+            _response = await _create(**params)
+            return self._parse_complete_response(_response)
         except (asyncio.CancelledError, GeneratorExit):
             raise
         except Exception as exc:

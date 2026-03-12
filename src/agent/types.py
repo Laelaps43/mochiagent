@@ -8,11 +8,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 import time
-from typing import Any, Dict, List, Literal, Optional
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
-from agent.core.utils import to_non_negative_int
+from agent.core._numeric import to_non_negative_int
 
 
 class MessageRole(str, Enum):
@@ -40,9 +40,9 @@ class Message(BaseModel):
 
     role: MessageRole
     content: str
-    tool_calls: Optional[List[ToolCallPayload]] = None
-    tool_call_id: Optional[str] = None
-    name: Optional[str] = None  # For tool responses
+    tool_calls: list[ToolCallPayload] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None  # For tool responses
 
 
 class ToolResult(BaseModel):
@@ -50,13 +50,13 @@ class ToolResult(BaseModel):
 
     tool_call_id: str
     tool_name: str
-    result: Any
-    error: Optional[str] = None
+    result: object
+    error: str | None = None
     success: bool = True
-    summary: Optional[str] = None
-    artifact_ref: Optional[str] = None
-    artifact_path: Optional[str] = None
-    raw_size_chars: Optional[int] = None
+    summary: str | None = None
+    artifact_ref: str | None = None
+    artifact_path: str | None = None
+    raw_size_chars: int | None = None
     truncated: bool = False
 
 
@@ -76,18 +76,26 @@ class ContextBudget(BaseModel):
     updated_at_ms: int = Field(default_factory=lambda: int(time.time() * 1000))
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | "ContextBudget | None") -> "ContextBudget":
+    def from_dict(cls, data: dict[str, object] | "ContextBudget | None") -> "ContextBudget":
         if data is None:
             return cls.zero()
         if isinstance(data, ContextBudget):
             return data
-        total = to_non_negative_int(data.get("total_tokens")) if data.get("total_tokens") is not None else None
+        total = (
+            to_non_negative_int(data.get("total_tokens"))
+            if data.get("total_tokens") is not None
+            else None
+        )
         input_t = to_non_negative_int(data.get("input_tokens"))
         output_t = to_non_negative_int(data.get("output_tokens"))
         reasoning_t = to_non_negative_int(data.get("reasoning_tokens"))
         used = input_t + output_t + reasoning_t
         if total is None:
-            remaining = to_non_negative_int(data.get("remaining_tokens")) if data.get("remaining_tokens") is not None else None
+            remaining = (
+                to_non_negative_int(data.get("remaining_tokens"))
+                if data.get("remaining_tokens") is not None
+                else None
+            )
         else:
             remaining = max(total - used, 0)
         return cls(
@@ -97,8 +105,10 @@ class ContextBudget(BaseModel):
             input_tokens=input_t,
             output_tokens=output_t,
             reasoning_tokens=reasoning_t,
-            source=data.get("source", "estimated"),
-            updated_at_ms=to_non_negative_int(data.get("updated_at_ms"), default=int(time.time() * 1000)),
+            source=cast("ContextBudgetSource", data.get("source", "estimated")),
+            updated_at_ms=to_non_negative_int(
+                data.get("updated_at_ms"), default=int(time.time() * 1000)
+            ),
         )
 
     @staticmethod
@@ -146,7 +156,7 @@ class SessionData(BaseModel):
     agent_name: str
     context_budget: ContextBudget
     message_count: int
-    messages: list[Any] 
+    messages: list[object]
     created_at: str
     updated_at: str
 
@@ -168,15 +178,15 @@ class ProviderUsage(BaseModel):
 class LLMStreamChunk(BaseModel):
     content: str = ""
     thinking: str = ""
-    tool_calls: List[ToolCallPayload] = Field(default_factory=list)
+    tool_calls: list[ToolCallPayload] = Field(default_factory=list)
     finish_reason: str = ""
-    usage: Optional[ProviderUsage] = None
+    usage: ProviderUsage | None = None
 
 
 class LLMMessage(BaseModel):
     role: str = ""
     content: str = ""
-    tool_calls: List[ToolCallPayload] = Field(default_factory=list)
+    tool_calls: list[ToolCallPayload] = Field(default_factory=list)
     tool_call_id: str = ""
     name: str = ""
 
@@ -216,9 +226,9 @@ class Event(BaseModel):
 
     type: EventType
     session_id: str
-    data: Dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, object] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class LLMConfig(BaseModel):
@@ -227,16 +237,16 @@ class LLMConfig(BaseModel):
     adapter: str
     provider: str
     model: str
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: str | None = None
+    base_url: str | None = None
     temperature: float = 0.7
-    max_tokens: Optional[int] = None
-    context_window_tokens: Optional[int] = None
+    max_tokens: int | None = None
+    context_window_tokens: int | None = None
     stream: bool = True
     timeout: int = 60
-    openai_max_retries: Optional[int] = None
+    openai_max_retries: int | None = None
     max_overflow_retries: int = 3
-    extra_params: Dict[str, Any] = Field(default_factory=dict)
+    extra_params: dict[str, object] = Field(default_factory=dict)
 
 
 class ToolDefinition(BaseModel):
@@ -244,8 +254,8 @@ class ToolDefinition(BaseModel):
 
     name: str
     description: str
-    parameters: Dict[str, Any]  # JSON Schema
-    required: List[str] = Field(default_factory=list)
+    parameters: dict[str, object]  # JSON Schema
+    required: list[str] = Field(default_factory=list)
 
 
 class StreamChunk(BaseModel):
@@ -253,6 +263,6 @@ class StreamChunk(BaseModel):
 
     session_id: str
     content: str
-    finish_reason: Optional[str] = None
-    tool_calls: Optional[List[ToolCallPayload]] = None
+    finish_reason: str | None = None
+    tool_calls: list[ToolCallPayload] | None = None
     is_final: bool = False

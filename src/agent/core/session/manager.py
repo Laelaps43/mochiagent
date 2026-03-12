@@ -2,7 +2,8 @@
 
 import asyncio
 import uuid
-from typing import Awaitable, Callable, Dict, Optional
+from collections.abc import Awaitable, Callable
+from typing import cast
 
 from loguru import logger
 
@@ -35,17 +36,17 @@ class SessionManager:
     def __init__(
         self,
         bus: MessageBus,
-        storage: Optional[StorageProvider] = None,
+        storage: StorageProvider | None = None,
     ):
-        self.bus = bus
-        self.storage = storage or MemoryStorage()
+        self.bus: MessageBus = bus
+        self.storage: StorageProvider = storage or MemoryStorage()
 
-        self._cache: Dict[str, SessionContext] = {}
-        self._state_machines: Dict[str, SessionStateMachine] = {}
+        self._cache: dict[str, SessionContext] = {}
+        self._state_machines: dict[str, SessionStateMachine] = {}
 
-        self._cache_lock = asyncio.Lock()
+        self._cache_lock: asyncio.Lock = asyncio.Lock()
 
-        self._session_listeners: Dict[str, list[Callable[[Event], Awaitable[None]]]] = {}
+        self._session_listeners: dict[str, list[Callable[[Event], Awaitable[None]]]] = {}
 
         logger.info(f"SessionManager initialized with {self.storage.__class__.__name__}")
 
@@ -58,9 +59,7 @@ class SessionManager:
         context = SessionContext.from_snapshot(session_data)
 
         messages_data = await self.storage.load_messages(session_id)
-        context.messages.extend(
-            Message.model_validate(msg_data) for msg_data in messages_data
-        )
+        context.messages.extend(Message.model_validate(msg_data) for msg_data in messages_data)
         logger.debug(f"Loaded {len(messages_data)} messages for session {session_id}")
 
         state_machine = SessionStateMachine(
@@ -103,7 +102,9 @@ class SessionManager:
         async with self._cache_lock:
             # 如果已在缓存中，说明其他协程已创建，直接返回已有的
             if session_id in self._cache:
-                logger.warning(f"Session {session_id} already in cache during creation, using existing")
+                logger.warning(
+                    f"Session {session_id} already in cache during creation, using existing"
+                )
                 return self._cache[session_id]
 
             self._cache[session_id] = context
@@ -123,7 +124,7 @@ class SessionManager:
 
     async def create_session(
         self,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         model_profile_id: str = "",
         agent_name: str = "general",
     ) -> SessionContext:
@@ -260,7 +261,9 @@ class SessionManager:
             if session_id in self._cache:
                 # 终止状态机
                 if session_id in self._state_machines:
-                    await self._state_machines[session_id].terminate()
+                    machine = self._state_machines[session_id]
+                    trigger = cast("Callable[[], Awaitable[None]]", getattr(machine, "terminate"))
+                    await trigger()
                     del self._state_machines[session_id]
 
                 del self._cache[session_id]
@@ -309,7 +312,7 @@ class SessionManager:
     async def finish_assistant_message(
         self,
         session_id: str,
-        tokens: Optional[TokenUsage] = None,
+        tokens: TokenUsage | None = None,
         finish: str = "stop",
     ) -> None:
         """
@@ -383,14 +386,18 @@ class SessionManager:
         else:
             logger.warning(f"Failed to transition session {session_id} to {new_state.value}")
 
-    def add_session_listener(self, session_id: str, listener: Callable[[Event], Awaitable[None]]) -> None:
+    def add_session_listener(
+        self, session_id: str, listener: Callable[[Event], Awaitable[None]]
+    ) -> None:
         """添加会话监听器"""
         if session_id not in self._session_listeners:
             self._session_listeners[session_id] = []
         self._session_listeners[session_id].append(listener)
         logger.debug(f"Added listener to session {session_id}")
 
-    def remove_session_listener(self, session_id: str, listener: Callable[[Event], Awaitable[None]]) -> None:
+    def remove_session_listener(
+        self, session_id: str, listener: Callable[[Event], Awaitable[None]]
+    ) -> None:
         """移除会话监听器"""
         if session_id in self._session_listeners:
             try:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator, List, Mapping, Optional
+from collections.abc import Mapping
 
 from pydantic import BaseModel, Field
 
@@ -12,17 +12,18 @@ class CompactionResult(BaseModel):
 
     applied: bool
     reason: str = ""
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    stats: Dict[str, Any] = Field(default_factory=dict)
-    artifacts: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, object] = Field(default_factory=dict)
+    stats: dict[str, object] = Field(default_factory=dict)
+    artifacts: list[dict[str, object]] = Field(default_factory=list)
+
 
 class StrategyConfig(BaseModel):
     """Typed wrapper for strategy-level configuration."""
 
-    values: Dict[str, object] = Field(default_factory=dict)
+    values: dict[str, object] = Field(default_factory=dict)
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, object] | None = None) -> "StrategyConfig":
+    def from_mapping(cls, values: Mapping[str, object] | None = None) -> StrategyConfig:
         return cls(values=dict(values or {}))
 
     def get(self, key: str, default: object | None = None) -> object | None:
@@ -30,9 +31,6 @@ class StrategyConfig(BaseModel):
 
     def __getitem__(self, key: str) -> object:
         return self.values[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self.values)
 
     def __len__(self) -> int:
         return len(self.values)
@@ -54,7 +52,7 @@ class CompactorRunOptions(BaseModel):
     auto_compact_ratio: float = 0.9
     keep_user_tokens_budget: int = 20000
     chars_per_token: float = 4.0
-    model_auto_compact_token_limit: Optional[int] = None
+    model_auto_compact_token_limit: int | None = None
     summarization_prompt: str = ""
     summary_max_retries: int = 2
     summary_max_trims: int = 20
@@ -65,10 +63,9 @@ class CompactorRunOptions(BaseModel):
     needs_follow_up: bool = False
 
     @classmethod
-    def from_config(cls, config: StrategyConfig) -> "CompactorRunOptions":
+    def from_config(cls, config: StrategyConfig) -> CompactorRunOptions:
         values = config.values
-        kwargs: dict[str, object] = {}
-        for f in (
+        field_names = {
             "auto_compact_ratio",
             "keep_user_tokens_budget",
             "chars_per_token",
@@ -79,10 +76,9 @@ class CompactorRunOptions(BaseModel):
             "summary_retry_sleep_ms",
             "token_limit_reached",
             "needs_follow_up",
-        ):
-            if f in values:
-                kwargs[f] = values[f]
-        return cls(**kwargs)
+        }
+        data = {f: values[f] for f in field_names if f in values}
+        return cls.model_validate(data)
 
 
 class CompactionPayload(BaseModel):
@@ -90,14 +86,14 @@ class CompactionPayload(BaseModel):
 
     applied: bool
     reason: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    stats: Dict[str, Any] = Field(default_factory=dict)
-    artifacts: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, object] = Field(default_factory=dict)
+    stats: dict[str, object] = Field(default_factory=dict)
+    artifacts: list[dict[str, object]] = Field(default_factory=list)
     name: str = "unknown"
     stage: str = ""
 
     @classmethod
-    def from_result(cls, result: CompactionResult, *, name: str, stage: str) -> "CompactionPayload":
+    def from_result(cls, result: CompactionResult, *, name: str, stage: str) -> CompactionPayload:
         return cls(
             applied=result.applied,
             reason=result.reason,
@@ -115,7 +111,7 @@ class CompactionPayload(BaseModel):
         stage: str,
         reason: str = "invalid_compactor_result",
         name: str = "unknown",
-    ) -> "CompactionPayload":
+    ) -> CompactionPayload:
         return cls(
             applied=False,
             reason=reason,
@@ -126,12 +122,13 @@ class CompactionPayload(BaseModel):
             stage=stage,
         )
 
+
 class CompactionDecision(BaseModel):
     """Trigger decision for a compaction attempt."""
 
     apply: bool
     reason: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class SummaryBuildResult(BaseModel):
@@ -150,7 +147,7 @@ class SummaryBuildResult(BaseModel):
         summary_text: str,
         trimmed_count: int,
         retries: int,
-    ) -> "SummaryBuildResult":
+    ) -> SummaryBuildResult:
         return cls(
             ok=True,
             summary_text=summary_text,
@@ -165,7 +162,7 @@ class SummaryBuildResult(BaseModel):
         error: str,
         trimmed_count: int,
         retries: int,
-    ) -> "SummaryBuildResult":
+    ) -> SummaryBuildResult:
         return cls(
             ok=False,
             error=error,

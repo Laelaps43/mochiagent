@@ -2,7 +2,7 @@
 Message Info - 消息元数据定义
 """
 
-from typing import Annotated, Any, Dict, Literal, Optional, Union
+from typing import Annotated, Literal
 from pydantic import BaseModel, Discriminator, Field
 
 from agent.types import TokenUsage
@@ -26,8 +26,8 @@ class ErrorRef(BaseModel):
     """错误信息"""
 
     message: str = ""
-    code: Optional[str] = None
-    hint: Optional[str] = None
+    code: str | None = None
+    hint: str | None = None
 
 
 class MessageInfoBase(BaseModel):
@@ -35,7 +35,6 @@ class MessageInfoBase(BaseModel):
 
     id: str
     session_id: str
-    role: Literal["user", "assistant", "system"]
     created_at: int = 0
 
 
@@ -44,10 +43,10 @@ class UserMessageInfo(MessageInfoBase):
 
     role: Literal["user"] = "user"
     agent: str = "general"
-    model: Optional[ModelRef] = None
-    system: Optional[str] = None
-    tools: Optional[Dict[str, bool]] = None
-    variant: Optional[str] = None
+    model: ModelRef | None = None
+    system: str | None = None
+    tools: dict[str, bool] | None = None
+    variant: str | None = None
 
 
 class AssistantMessageInfo(MessageInfoBase):
@@ -58,12 +57,12 @@ class AssistantMessageInfo(MessageInfoBase):
     agent: str = "general"
     model_id: str
     provider_id: str
-    path: Optional[PathRef] = None
-    summary: Optional[bool] = None
+    path: PathRef | None = None
+    summary: bool | None = None
     tokens: TokenUsage = Field(default_factory=TokenUsage)
-    completed_at: Optional[int] = None
-    finish: Optional[str] = None
-    error: Optional[ErrorRef] = None
+    completed_at: int | None = None
+    finish: str | None = None
+    error: ErrorRef | None = None
 
 
 class SystemMessageInfo(MessageInfoBase):
@@ -76,6 +75,6 @@ class SystemMessageInfo(MessageInfoBase):
 
 
 MessageInfo = Annotated[
-    Union[UserMessageInfo, AssistantMessageInfo, SystemMessageInfo],
+    UserMessageInfo | AssistantMessageInfo | SystemMessageInfo,
     Discriminator("role"),
 ]

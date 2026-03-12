@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterator, Mapping
+from collections.abc import Mapping
 
 from pydantic import BaseModel, Field
 
 
 class ToolPostprocessorConfig(BaseModel):
-    values: Dict[str, object] = Field(default_factory=dict)
+    values: dict[str, object] = Field(default_factory=dict)
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, object] | None = None) -> "ToolPostprocessorConfig":
+    def from_mapping(cls, values: Mapping[str, object] | None = None) -> ToolPostprocessorConfig:
         return cls(values=dict(values or {}))
 
     def get(self, key: str, default: object | None = None) -> object | None:
@@ -19,9 +19,6 @@ class ToolPostprocessorConfig(BaseModel):
 
     def __getitem__(self, key: str) -> object:
         return self.values[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self.values)
 
     def __len__(self) -> int:
         return len(self.values)

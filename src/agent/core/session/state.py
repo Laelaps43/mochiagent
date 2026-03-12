@@ -3,12 +3,24 @@ Session State Machine - 会话状态机
 使用transitions库实现异步状态机
 """
 
-from typing import Callable, Optional
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from typing import Protocol, cast
 
 from loguru import logger
 from transitions.extensions.asyncio import AsyncMachine
 
 from agent.types import SessionState
+
+
+class _Transition(Protocol):
+    source: str
+    dest: str
+
+
+class _EventData(Protocol):
+    transition: _Transition
 
 
 class SessionStateMachine:
@@ -18,7 +30,7 @@ class SessionStateMachine:
     """
 
     # 定义状态转换规则
-    TRANSITIONS = [
+    TRANSITIONS: list[dict[str, str]] = [
         # 从IDLE可以转到PROCESSING
         {
             "trigger": "start_processing",
@@ -83,7 +95,11 @@ class SessionStateMachine:
         {"trigger": "terminate", "source": "*", "dest": SessionState.TERMINATED.value},
     ]
 
-    def __init__(self, session_id: str, on_state_change: Optional[Callable] = None):
+    def __init__(
+        self,
+        session_id: str,
+        on_state_change: Callable[[str, str, str], Awaitable[None]] | None = None,
+    ):
         """
         初始化状态机
 
@@ -91,13 +107,13 @@ class SessionStateMachine:
             session_id: 会话ID
             on_state_change: 状态改变时的回调函数 async def callback(session_id, from_state, to_state)
         """
-        self.session_id = session_id
-        self._on_state_change = on_state_change
+        self.session_id: str = session_id
+        self._on_state_change: Callable[[str, str, str], Awaitable[None]] | None = on_state_change
 
-        self.state = SessionState.IDLE.value
+        self.state: str = SessionState.IDLE.value
 
         # 创建异步状态机
-        self.machine = AsyncMachine(
+        self.machine: AsyncMachine = AsyncMachine(
             model=self,
             states=[state.value for state in SessionState],
             transitions=self.TRANSITIONS,
@@ -107,14 +123,15 @@ class SessionStateMachine:
         )
 
         # 添加状态转换后的回调
-        self.machine.after_state_change.append(self._after_state_change)
+        # transitions library types after_state_change as list[str] but accepts async callables at runtime
+        cast(list[object], self.machine.after_state_change).append(self._after_state_change)
 
         logger.info(f"StateMachine created for session {session_id}, initial state: {self.state}")
 
-    async def _after_state_change(self, event_data):
+    async def _after_state_change(self, event_data: _EventData) -> None:
         """状态转换后的回调"""
-        from_state = event_data.transition.source
-        to_state = event_data.transition.dest
+        from_state = str(event_data.transition.source)
+        to_state = str(event_data.transition.dest)
 
         logger.info(f"Session {self.session_id} state changed: {from_state} -> {to_state}")
 
@@ -140,9 +157,8 @@ class SessionStateMachine:
         Returns:
             bool: 是否可以转换
         """
-        return self.machine.get_triggers(self.state) and trigger in self.machine.get_triggers(
-            self.state
-        )
+        triggers = self.machine.get_triggers(self.state)
+        return bool(triggers) and trigger in triggers
 
     async def transition_to(self, new_state: SessionState) -> bool:
         """
@@ -178,8 +194,7 @@ class SessionStateMachine:
         trigger = trigger_map.get((current, new_state))
         if not trigger:
             logger.warning(
-                f"No valid transition from {current.value} to {new_state.value} "
-                f"for session {self.session_id}"
+                f"No valid transition from {current.value} to {new_state.value} for session {self.session_id}"
             )
             return False
 

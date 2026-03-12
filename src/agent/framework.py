@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Optional, Dict, TYPE_CHECKING
+from types import TracebackType
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -29,20 +30,20 @@ class AgentFramework:
         max_iterations: int = 100,
     ):
         """创建框架实例"""
-        self.max_concurrent = max_concurrent
-        self.max_iterations = max(1, max_iterations)
-        self.bus = MessageBus(max_concurrent=max_concurrent)
-        self.adapter_registry = AdapterRegistry()
+        self.max_concurrent: int = max_concurrent
+        self.max_iterations: int = max(1, max_iterations)
+        self.bus: MessageBus = MessageBus(max_concurrent=max_concurrent)
+        self.adapter_registry: AdapterRegistry = AdapterRegistry()
 
         # 延迟初始化（需要 Storage）
-        self.session_manager: Optional[SessionManager] = None
-        self.event_loop: Optional[AgentEventLoop] = None
+        self.session_manager: SessionManager | None = None
+        self.event_loop: AgentEventLoop | None = None
 
-        self._agents: Dict[str, BaseAgent] = {}
-        self._llm_profiles: Dict[str, LLMConfig] = {}
-        self._strategy_manager = AgentStrategyManager()
-        self._initialized = False
-        self._started = False
+        self._agents: dict[str, BaseAgent] = {}
+        self._llm_profiles: dict[str, LLMConfig] = {}
+        self._strategy_manager: AgentStrategyManager = AgentStrategyManager()
+        self._initialized: bool = False
+        self._started: bool = False
 
         logger.info(
             "AgentFramework created (max_concurrent={}, max_iterations={})",
@@ -93,13 +94,8 @@ class AgentFramework:
             RuntimeError: If framework not initialized
             ValueError: If agent is not BaseAgent instance or name conflicts
         """
-        from .base_agent import BaseAgent
-
         if not self._initialized:
             raise RuntimeError("Framework not initialized. Call initialize() first.")
-
-        if not isinstance(agent, BaseAgent):
-            raise ValueError(f"Agent must be instance of BaseAgent, got {type(agent)}")
 
         if agent.name in self._agents:
             raise ValueError(f"Agent '{agent.name}' already registered")
@@ -108,16 +104,14 @@ class AgentFramework:
 
         # Agent 必须明确指定允许的 profiles
         if normalized_allowed is None:
-            raise ValueError(
-                f"Agent '{agent.name}' must specify allowed_model_profiles explicitly"
-            )
+            raise ValueError(f"Agent '{agent.name}' must specify allowed_model_profiles explicitly")
 
         # 过滤出 agent 可用的 llm_profiles
         agent_llm_profiles = {
-            pid: cfg for pid, cfg in self._llm_profiles.items()
-            if pid in normalized_allowed
+            pid: cfg for pid, cfg in self._llm_profiles.items() if pid in normalized_allowed
         }
 
+        assert self.session_manager is not None
         ctx = AgentContext(
             session_manager=self.session_manager,
             message_bus=self.bus,
@@ -131,12 +125,12 @@ class AgentFramework:
         try:
             await self._setup_agent(agent)
         except Exception:
-            self._agents.pop(agent.name, None)
+            _ = self._agents.pop(agent.name, None)
             raise
 
         logger.info(f"Registered agent: {agent.name}")
 
-    def get_agent(self, agent_name: str) -> Optional[BaseAgent]:
+    def get_agent(self, agent_name: str) -> BaseAgent | None:
         return self._agents.get(agent_name)
 
     def list_agents(self) -> list[str]:
@@ -148,14 +142,13 @@ class AgentFramework:
 
     def set_llm_configs(self, configs: list[LLMConfig]) -> None:
         """初始化设置 LLM 配置列表（profile_id = provider:model）。"""
-        profiles: Dict[str, LLMConfig] = {}
+        profiles: dict[str, LLMConfig] = {}
         for config in configs:
             profile_id = normalize_profile_id(f"{config.provider}:{config.model}")
             if config.adapter not in self.adapter_registry.list_adapters():
                 available = ", ".join(sorted(self.adapter_registry.list_adapters())) or "<none>"
                 raise ValueError(
-                    f"Unknown adapter '{config.adapter}' for profile '{profile_id}'. "
-                    f"Available adapters: {available}"
+                    f"Unknown adapter '{config.adapter}' for profile '{profile_id}'. Available adapters: {available}"
                 )
 
             existing = profiles.get(profile_id)
@@ -166,7 +159,6 @@ class AgentFramework:
         self._llm_profiles.clear()
         self._llm_profiles.update(profiles)
         logger.info("Loaded {} llm profiles", len(self._llm_profiles))
-
 
     def _normalize_allowed_profiles(self, allowed_profiles: set[str] | None) -> set[str] | None:
         if allowed_profiles is None:
@@ -235,7 +227,12 @@ class AgentFramework:
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         await self.stop()
 
 
@@ -247,7 +244,7 @@ class FrameworkRegistry:
     """管理框架单例及重建策略。"""
 
     def __init__(self) -> None:
-        self.instance: Optional[AgentFramework] = None
+        self.instance: AgentFramework | None = None
 
     @staticmethod
     def should_recreate_instance(
@@ -274,8 +271,12 @@ class FrameworkRegistry:
         max_concurrent: int | None = None,
         max_iterations: int | None = None,
     ) -> AgentFramework:
-        resolved_max_concurrent = max_concurrent if max_concurrent is not None else DEFAULT_MAX_CONCURRENT
-        resolved_max_iterations = max(1, max_iterations if max_iterations is not None else DEFAULT_MAX_ITERATIONS)
+        resolved_max_concurrent = (
+            max_concurrent if max_concurrent is not None else DEFAULT_MAX_CONCURRENT
+        )
+        resolved_max_iterations = max(
+            1, max_iterations if max_iterations is not None else DEFAULT_MAX_ITERATIONS
+        )
 
         if self.instance is None:
             self.instance = AgentFramework(
@@ -296,8 +297,7 @@ class FrameworkRegistry:
 
         if self.instance.is_initialized():
             logger.warning(
-                "Framework already initialized, ignore new config "
-                "(requested max_concurrent={}, max_iterations={})",
+                "Framework already initialized, ignore new config (requested max_concurrent={}, max_iterations={})",
                 resolved_max_concurrent,
                 resolved_max_iterations,
             )
