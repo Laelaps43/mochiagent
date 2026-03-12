@@ -50,7 +50,7 @@ class SessionManager:
         self._listener_tasks: dict[str, asyncio.Task[None]] = {}
         self._listener_tasks_lock: asyncio.Lock = asyncio.Lock()
 
-        logger.info(f"SessionManager initialized with {self.storage.__class__.__name__}")
+        logger.info("SessionManager initialized with {}", self.storage.__class__.__name__)
 
     async def _load_session_into_cache(
         self,
@@ -64,7 +64,7 @@ class SessionManager:
             session_id, from_message_id=context.last_compaction_message_id
         )
         context.messages.extend(messages)
-        logger.debug(f"Loaded {len(messages)} messages for session {session_id}")
+        logger.debug("Loaded {} messages for session {}", len(messages), session_id)
 
         state_machine = SessionStateMachine(
             session_id=session_id,
@@ -115,7 +115,7 @@ class SessionManager:
             )
         )
 
-        logger.info(f"Created session: {session_id}")
+        logger.info("Created session: {}", session_id)
         return context
 
     async def create_session(
@@ -152,34 +152,29 @@ class SessionManager:
                 try:
                     await self.storage.delete_session(session_id)
                 except Exception:
-                    logger.warning(f"Failed to cleanup storage for session {session_id}")
+                    logger.warning("Failed to cleanup storage for session {}", session_id)
 
-                logger.error(f"Failed to create session {session_id}: {e}")
+                logger.error("Failed to create session {}: {}", session_id, e)
                 raise
 
     async def get_session(self, session_id: str) -> SessionContext:
         """获取会话（带缓存和延迟加载）"""
-        # 1. 快速路径：先不加锁检查缓存（避免锁竞争）
-        cached = self._cache.get(session_id)
-        if cached is not None:
-            return cached
-
-        # 2. 慢速路径：需要从存储加载，使用锁保护
         async with self._cache_lock:
-            # 双重检查：可能在等待锁期间其他协程已经加载了
-            if session_id in self._cache:
-                return self._cache[session_id]
+            # 1. 检查缓存
+            cached = self._cache.get(session_id)
+            if cached is not None:
+                return cached
 
-            # 3. 从存储加载
+            # 2. 从存储加载
             session_data = await self.storage.load_session(session_id)
 
             if not session_data:
                 raise ValueError(f"Session {session_id} not found")
 
-            # 4. 反序列化、加载消息、加入缓存
+            # 3. 反序列化、加载消息、加入缓存
             context = await self._load_session_into_cache(session_id, session_data)
 
-            logger.info(f"Loaded session from storage: {session_id}")
+            logger.info("Loaded session from storage: {}", session_id)
             return context
 
     async def get_or_create_session(
@@ -191,22 +186,16 @@ class SessionManager:
         """获取或创建会话（按需创建）"""
         if not model_profile_id:
             raise ValueError("model_profile_id is required")
-        # 1. 快速路径：检查缓存
-        cached = self._cache.get(session_id)
-        if cached is not None:
-            logger.debug(f"Session {session_id} found in cache")
-            await self._refresh_model_profile_if_needed(session_id, cached, model_profile_id)
-            return cached
 
-        # 2. 慢速路径：需要锁保护（避免竞态条件）
         async with self._cache_lock:
-            # 双重检查：可能在等待锁期间其他协程已经加载或创建了
-            if session_id in self._cache:
-                context = self._cache[session_id]
-                await self._refresh_model_profile_if_needed(session_id, context, model_profile_id)
-                return context
+            # 1. 检查缓存
+            cached = self._cache.get(session_id)
+            if cached is not None:
+                logger.debug("Session {} found in cache", session_id)
+                await self._refresh_model_profile_if_needed(session_id, cached, model_profile_id)
+                return cached
 
-            # 3. 尝试从 Storage 加载（在锁内直接加载，避免调用 get_session）
+            # 2. 尝试从 Storage 加载
             if await self.storage.session_exists(session_id):
                 session_data = await self.storage.load_session(session_id)
                 if session_data:
@@ -217,12 +206,12 @@ class SessionManager:
                         session_id, context, model_profile_id
                     )
 
-                    logger.info(f"Loaded session from storage: {session_id}")
+                    logger.info("Loaded session from storage: {}", session_id)
                     return context
 
-            # 4. 在锁内创建新会话，避免 TOCTOU 竞态
+            # 3. 在锁内创建新会话
             try:
-                logger.info(f"Creating new session {session_id}")
+                logger.info("Creating new session {}", session_id)
                 return await self._create_and_save_session(session_id, model_profile_id, agent_name)
 
             except Exception as e:
@@ -232,7 +221,7 @@ class SessionManager:
                 if session_id in self._state_machines:
                     del self._state_machines[session_id]
 
-                logger.error(f"Failed to save session {session_id}: {e}")
+                logger.error("Failed to save session {}: {}", session_id, e)
                 raise
 
     async def _refresh_model_profile_if_needed(
@@ -247,7 +236,7 @@ class SessionManager:
 
         context.update_model_profile(model_profile_id)
         await self.storage.save_session(session_id, context.metadata)
-        logger.info(f"Session {session_id} model_profile_id refreshed: {model_profile_id}")
+        logger.info("Session {} model_profile_id refreshed: {}", session_id, model_profile_id)
 
     async def delete_session(self, session_id: str) -> None:
         """删除会话"""
@@ -283,7 +272,7 @@ class SessionManager:
             )
         )
 
-        logger.info(f"Deleted session: {session_id}")
+        logger.info("Deleted session: {}", session_id)
 
     async def add_user_message(self, session_id: str, parts: list[UserInput]) -> Message:
         """添加用户消息并自动保存"""
@@ -293,7 +282,7 @@ class SessionManager:
         # 自动保存消息
         await self.storage.save_message(session_id, message)
 
-        logger.debug(f"Added and saved user message: {message.info.id}")
+        logger.debug("Added and saved user message: {}", message.info.id)
         return message
 
     async def start_assistant_message(
@@ -310,7 +299,7 @@ class SessionManager:
             parent_id, provider_id=provider_id, model_id=model_id
         )
 
-        logger.debug(f"Started assistant message: {message.info.id}")
+        logger.debug("Started assistant message: {}", message.info.id)
         return message
 
     async def finish_assistant_message(
@@ -334,7 +323,7 @@ class SessionManager:
         # 自动保存完成的消息
         if finished_message:
             await self.storage.save_message(session_id, finished_message)
-            logger.debug(f"Finished and saved assistant message: {finished_message.info.id}")
+            logger.debug("Finished and saved assistant message: {}", finished_message.info.id)
 
     async def save_session_metadata(self, session_id: str) -> None:
         """回写会话元数据（不涉及消息历史）。"""
@@ -346,7 +335,7 @@ class SessionManager:
         context = await self.get_session(session_id)
         context.add_part_to_current(part)
 
-        logger.debug(f"Added part to current message: {part.__class__.__name__}")
+        logger.debug("Added part to current message: {}", part.__class__.__name__)
 
     async def switch_session_agent(self, session_id: str, agent_name: str) -> None:
         """切换会话的 Agent"""
@@ -368,7 +357,7 @@ class SessionManager:
             )
         )
 
-        logger.info(f"Session {session_id} agent switched: {old_agent} -> {agent_name}")
+        logger.info("Session {} agent switched: {} -> {}", session_id, old_agent, agent_name)
 
     async def update_state(self, session_id: str, new_state: SessionState) -> None:
         """更新会话状态"""
@@ -378,7 +367,7 @@ class SessionManager:
         async with self._cache_lock:
             state_machine = self._state_machines.get(session_id)
             if not state_machine:
-                logger.warning(f"State machine for session {session_id} not found")
+                logger.warning("State machine for session {} not found", session_id)
                 return
 
         # 状态转换
@@ -386,9 +375,9 @@ class SessionManager:
 
         if success:
             context.update_state(new_state)
-            logger.debug(f"Session {session_id} state updated to {new_state.value}")
+            logger.debug("Session {} state updated to {}", session_id, new_state.value)
         else:
-            logger.warning(f"Failed to transition session {session_id} to {new_state.value}")
+            logger.warning("Failed to transition session {} to {}", session_id, new_state.value)
 
     def add_session_listener(
         self, session_id: str, listener: Callable[[Event], Awaitable[None]]
@@ -397,7 +386,7 @@ class SessionManager:
         if session_id not in self._session_listeners:
             self._session_listeners[session_id] = []
         self._session_listeners[session_id].append(listener)
-        logger.debug(f"Added listener to session {session_id}")
+        logger.debug("Added listener to session {}", session_id)
 
     def remove_session_listener(
         self, session_id: str, listener: Callable[[Event], Awaitable[None]]
@@ -406,12 +395,12 @@ class SessionManager:
         if session_id in self._session_listeners:
             try:
                 self._session_listeners[session_id].remove(listener)
-                logger.debug(f"Removed listener from session {session_id}")
+                logger.debug("Removed listener from session {}", session_id)
                 # 如果没有监听器了，删除该会话的监听器列表
                 if not self._session_listeners[session_id]:
                     del self._session_listeners[session_id]
             except ValueError:
-                logger.warning(f"Listener not found in session {session_id}")
+                logger.warning("Listener not found in session {}", session_id)
 
     async def emit_to_session_listeners(self, session_id: str, event: Event) -> None:
         """发送事件到会话监听器"""
@@ -435,7 +424,10 @@ class SessionManager:
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     logger.error(
-                        f"Session listener {i} failed for session {session_id}: {result}",
+                        "Session listener {} failed for session {}: {}",
+                        i,
+                        session_id,
+                        result,
                         exc_info=result,
                     )
 
@@ -447,9 +439,18 @@ class SessionManager:
         def _cleanup(done_task: asyncio.Task[None]) -> None:
             if not done_task.cancelled():
                 _ = done_task.exception()
-            current = self._listener_tasks.get(session_id)
-            if current is done_task:
-                _ = self._listener_tasks.pop(session_id, None)
+
+            async def _safe_remove() -> None:
+                async with self._listener_tasks_lock:
+                    current = self._listener_tasks.get(session_id)
+                    if current is done_task:
+                        _ = self._listener_tasks.pop(session_id, None)
+
+            try:
+                loop = asyncio.get_running_loop()
+                _ = loop.create_task(_safe_remove())
+            except RuntimeError:
+                pass
 
         task.add_done_callback(_cleanup)
 
