@@ -4,9 +4,10 @@ LLM Provider Base - LLM提供商基类
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, List, Optional
+from collections.abc import AsyncGenerator
 
 from agent.core.message import Message as InternalMessage
+from agent.core.message.part import TextPart, ToolPart
 from agent.types import LLMConfig, LLMStreamChunk, ToolDefinition
 
 
@@ -17,58 +18,55 @@ class LLMProvider(ABC):
     """
 
     def __init__(self, config: LLMConfig):
-        self.config = config
+        self.config: LLMConfig = config
 
-    def prepare_messages(self, messages: list[InternalMessage]) -> list[dict[str, Any]]:
+    def prepare_messages(self, messages: list[InternalMessage]) -> list[dict[str, object]]:
         """将内部 Message 列表转换为 LLM API 格式的 dict 列表。
 
         子类可覆写（如 Claude API 需要 system 单独传）。
         """
-        result: list[dict[str, Any]] = []
+        result: list[dict[str, object]] = []
         for msg in messages:
             text_contents: list[str] = []
-            tool_calls: list[dict[str, Any]] = []
-            tool_results: list[dict[str, Any]] = []
+            tool_calls: list[dict[str, object]] = []
+            tool_results: list[dict[str, object]] = []
 
             for part in msg.parts:
-                match part:
-                    case {"type": "text", "text": str(text)}:
-                        text_contents.append(text)
-                    case {
-                        "type": "tool",
-                        "call_id": str(call_id),
-                        "tool": str(tool),
-                        "state": state,
-                    }:
-                        if state.status in ("running", "completed", "error"):
-                            tool_calls.append(
-                                {
-                                    "id": call_id,
-                                    "type": "function",
-                                    "function": {"name": tool, "arguments": state.input.arguments},
-                                }
-                            )
-                        if state.status == "completed":
-                            tool_results.append(
-                                {
-                                    "role": "tool",
-                                    "content": state.summary or state.output,
-                                    "tool_call_id": call_id,
-                                }
-                            )
-                        elif state.status == "error":
-                            tool_results.append(
-                                {
-                                    "role": "tool",
-                                    "content": f"Error: {state.error or 'Unknown error'}",
-                                    "tool_call_id": call_id,
-                                }
-                            )
+                if isinstance(part, TextPart):
+                    text_contents.append(part.text)
+                elif isinstance(part, ToolPart):
+                    state = part.state
+                    call_id = part.call_id
+                    tool = part.tool
+                    if state.status in ("running", "completed", "error"):
+                        tool_calls.append(
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {"name": tool, "arguments": state.input.arguments},
+                            }
+                        )
+                    if state.status == "completed":
+                        tool_results.append(
+                            {
+                                "role": "tool",
+                                "content": state.summary or state.output,
+                                "tool_call_id": call_id,
+                            }
+                        )
+                    elif state.status == "error":
+                        tool_results.append(
+                            {
+                                "role": "tool",
+                                "content": f"Error: {state.error or 'Unknown error'}",
+                                "tool_call_id": call_id,
+                            }
+                        )
 
             if not text_contents and not tool_calls:
                 continue
 
-            main_msg: dict[str, Any] = {
+            main_msg: dict[str, object] = {
                 "role": msg.info.role,
                 "content": "".join(text_contents),
             }
@@ -80,12 +78,12 @@ class LLMProvider(ABC):
         return result
 
     @abstractmethod
-    async def stream_chat(
+    def stream_chat(
         self,
         messages: list[InternalMessage],
-        tools: Optional[List[ToolDefinition]] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[LLMStreamChunk]:
+        tools: list[ToolDefinition] | None = None,
+        **kwargs: object,
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
         """
         流式对话
 
@@ -106,8 +104,8 @@ class LLMProvider(ABC):
     async def complete(
         self,
         messages: list[InternalMessage],
-        tools: Optional[List[ToolDefinition]] = None,
-        **kwargs: Any,
+        tools: list[ToolDefinition] | None = None,
+        **kwargs: object,
     ) -> LLMStreamChunk:
         """
         非流式对话

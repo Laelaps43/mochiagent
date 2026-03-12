@@ -4,7 +4,6 @@ Session Context - 会话上下文管理
 
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from loguru import logger
@@ -48,17 +47,17 @@ class SessionContext:
         model_profile_id: str,
         agent_name: str = "general",
     ):
-        self.session_id = session_id
-        self.state = SessionState.IDLE
-        self.model_profile_id = model_profile_id
-        self.agent_name = agent_name
+        self.session_id: str = session_id
+        self.state: SessionState = SessionState.IDLE
+        self.model_profile_id: str | None = model_profile_id
+        self.agent_name: str = agent_name
         self.context_budget: ContextBudget = ContextBudget()
-        self.messages: List[Message] = []
-        self.current_message: Optional[Message] = None
-        self.created_at = datetime.now(tz=timezone.utc)
-        self.updated_at = datetime.now(tz=timezone.utc)
+        self.messages: list[Message] = []
+        self.current_message: Message | None = None
+        self.created_at: datetime = datetime.now(tz=timezone.utc)
+        self.updated_at: datetime = datetime.now(tz=timezone.utc)
 
-    def build_user_message(self, parts: List[UserInput]) -> Message:
+    def build_user_message(self, parts: list[UserInput]) -> Message:
         message_id = f"msg_{uuid4().hex[:UUID_PREFIX_LENGTH]}"
         message = Message(
             info=UserMessageInfo(
@@ -103,11 +102,14 @@ class SessionContext:
             self.current_message.add_part(part)
             self.updated_at = datetime.now(tz=timezone.utc)
         else:
-            logger.warning("add_part_to_current called but no current_message exists, part dropped: {}", type(part).__name__)
+            logger.warning(
+                "add_part_to_current called but no current_message exists, part dropped: {}",
+                type(part).__name__,
+            )
 
     def finish_current_message(
         self,
-        tokens: Optional[TokenUsage] = None,
+        tokens: TokenUsage | None = None,
         finish: str = "stop",
     ) -> None:
         if self.current_message and isinstance(self.current_message.info, AssistantMessageInfo):
@@ -127,7 +129,7 @@ class SessionContext:
         self.updated_at = datetime.now(tz=timezone.utc)
         logger.info(f"Session {self.session_id} switched agent: {old_agent} -> {new_agent_name}")
 
-    def update_model_profile(self, model_profile_id: Optional[str]) -> None:
+    def update_model_profile(self, model_profile_id: str | None) -> None:
         """更新会话绑定的模型 profile。"""
         self.model_profile_id = model_profile_id
         self.updated_at = datetime.now(tz=timezone.utc)
@@ -141,7 +143,7 @@ class SessionContext:
         reasoning_tokens: int,
         source: ContextBudgetSource,
     ) -> ContextBudget:
-        self.context_budget.update(
+        _ = self.context_budget.update(
             total_tokens=total_tokens,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -157,7 +159,7 @@ class SessionContext:
         return SessionMetadataData(
             session_id=self.session_id,
             state=self.state.value,
-            model_profile_id=self.model_profile_id,
+            model_profile_id=self.model_profile_id or "",
             agent_name=self.agent_name,
             context_budget=self.context_budget,
             created_at=self.created_at.isoformat(),
@@ -170,7 +172,7 @@ class SessionContext:
         return SessionData(
             session_id=self.session_id,
             state=self.state.value,
-            model_profile_id=self.model_profile_id,
+            model_profile_id=self.model_profile_id or "",
             agent_name=self.agent_name,
             context_budget=self.context_budget,
             message_count=len(self.messages),
@@ -193,8 +195,6 @@ class SessionContext:
 
         # 如果是 SessionData（包含 messages）
         if isinstance(data, SessionData):
-            context.messages.extend(
-                Message.model_validate(msg_data) for msg_data in data.messages
-            )
+            context.messages.extend(Message.model_validate(msg_data) for msg_data in data.messages)
 
         return context

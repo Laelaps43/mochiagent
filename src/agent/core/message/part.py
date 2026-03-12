@@ -3,7 +3,7 @@ Part Models - Part 数据模型定义
 """
 
 import time
-from typing import Annotated, Any, Dict, Literal, Optional, Union, cast
+from typing import Annotated, Literal, cast, override
 from uuid import uuid4
 
 from pydantic import BaseModel, Discriminator
@@ -16,7 +16,7 @@ class TimeInfo(BaseModel):
     """时间信息"""
 
     start: int  # 毫秒时间戳
-    end: Optional[int] = None  # 毫秒时间戳
+    end: int | None = None  # 毫秒时间戳
 
 
 class PartBase(BaseModel):
@@ -27,7 +27,7 @@ class PartBase(BaseModel):
     message_id: str
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], session_id: str, message_id: str) -> "Part":
+    def from_dict(cls, _data: dict[str, object], _session_id: str, _message_id: str) -> "Part":
         """
         从字典创建 Part（子类必须实现）
 
@@ -41,7 +41,7 @@ class PartBase(BaseModel):
         """
         raise NotImplementedError(f"{cls.__name__} must implement from_dict()")
 
-    def to_llm_format(self) -> Optional[Dict[str, Any]]:
+    def to_llm_format(self) -> dict[str, object] | None:
         """
         转换为 LLM 格式的贡献
 
@@ -62,9 +62,9 @@ class UserTextInput(BaseModel):
 
     type: Literal["text"] = "text"
     text: str
-    synthetic: Optional[bool] = None
-    ignored: Optional[bool] = None
-    metadata: Optional[Dict[str, Any]] = None
+    synthetic: bool | None = None
+    ignored: bool | None = None
+    metadata: dict[str, object] | None = None
 
     def to_part(self, session_id: str, message_id: str) -> "TextPart":
         return TextPart.create_fast(
@@ -77,7 +77,7 @@ class UserTextInput(BaseModel):
         )
 
 
-UserInput = Union[UserTextInput]  # 保留 Union 以便后续扩展新的输入类型
+UserInput = UserTextInput
 
 
 # ============ TextPart - 文本内容 ============
@@ -88,10 +88,10 @@ class TextPart(PartBase):
 
     type: Literal["text"] = "text"
     text: str
-    synthetic: Optional[bool] = None  # 是否为系统生成
-    ignored: Optional[bool] = None  # 是否忽略
-    time: Optional[TimeInfo] = None
-    metadata: Optional[Dict[str, Any]] = None
+    synthetic: bool | None = None  # 是否为系统生成
+    ignored: bool | None = None  # 是否忽略
+    time: TimeInfo | None = None
+    metadata: dict[str, object] | None = None
 
     @classmethod
     def create_fast(
@@ -100,9 +100,9 @@ class TextPart(PartBase):
         session_id: str,
         message_id: str,
         text: str,
-        synthetic: Optional[bool] = None,
-        ignored: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        synthetic: bool | None = None,
+        ignored: bool | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> "TextPart":
         return cls(
             id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
@@ -116,24 +116,26 @@ class TextPart(PartBase):
         )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], session_id: str, message_id: str) -> "TextPart":
+    @override
+    def from_dict(cls, data: dict[str, object], session_id: str, message_id: str) -> "TextPart":
         """从字典创建 TextPart"""
         return cls(
             id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
             session_id=session_id,
             message_id=message_id,
-            text=data["text"],
-            synthetic=data.get("synthetic"),
-            ignored=data.get("ignored"),
+            text=cast(str, data["text"]),
+            synthetic=cast("bool | None", data.get("synthetic")),
+            ignored=cast("bool | None", data.get("ignored")),
             time=TimeInfo(start=int(time.time() * 1000)),
-            metadata=data.get("metadata"),
+            metadata=cast("dict[str, object] | None", data.get("metadata")),
         )
 
-    def to_llm_format(self) -> Optional[Dict[str, Any]]:
+    @override
+    def to_llm_format(self) -> dict[str, object] | None:
         """文本内容贡献给 LLM 消息的 content"""
         return {"type": "text", "content": self.text}
 
-    def to_event_payload(self) -> Dict[str, Any]:
+    def to_event_payload(self) -> dict[str, object]:
         return {
             "id": self.id,
             "session_id": self.session_id,
@@ -156,7 +158,7 @@ class ReasoningPart(PartBase):
     type: Literal["reasoning"] = "reasoning"
     text: str
     time: TimeInfo
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, object] | None = None
 
     @classmethod
     def create_fast(
@@ -167,7 +169,7 @@ class ReasoningPart(PartBase):
         text: str,
         start: int,
         end: int,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, object] | None = None,
     ) -> "ReasoningPart":
         return cls(
             id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
@@ -179,24 +181,31 @@ class ReasoningPart(PartBase):
         )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], session_id: str, message_id: str) -> "ReasoningPart":
+    @override
+    def from_dict(
+        cls, data: dict[str, object], session_id: str, message_id: str
+    ) -> "ReasoningPart":
         """从字典创建 ReasoningPart"""
         return cls(
             id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
             session_id=session_id,
             message_id=message_id,
-            text=data["text"],
-            time=TimeInfo(**data["time"])
+            text=cast(str, data["text"]),
+            time=TimeInfo(
+                start=cast(int, cast(dict[str, object], data["time"])["start"]),
+                end=cast("int | None", cast(dict[str, object], data["time"]).get("end")),
+            )
             if "time" in data
             else TimeInfo(start=int(time.time() * 1000)),
-            metadata=data.get("metadata"),
+            metadata=cast("dict[str, object] | None", data.get("metadata")),
         )
 
-    def to_llm_format(self) -> Optional[Dict[str, Any]]:
+    @override
+    def to_llm_format(self) -> dict[str, object] | None:
         """思考过程不发送给 LLM（内部数据）"""
         return None
 
-    def to_event_payload(self) -> Dict[str, Any]:
+    def to_event_payload(self) -> dict[str, object]:
         return {
             "id": self.id,
             "session_id": self.session_id,
@@ -230,8 +239,8 @@ class ToolStateRunning(BaseModel):
 
     status: Literal["running"] = "running"
     input: ToolInput
-    title: Optional[str] = None
-    metadata: Optional[Any] = None
+    title: str | None = None
+    metadata: dict[str, object] | None = None
     time: TimeInfo
 
 
@@ -242,12 +251,12 @@ class ToolStateCompleted(BaseModel):
     input: ToolInput
     output: str
     summary: str = ""
-    artifact_ref: Optional[str] = None
-    artifact_path: Optional[str] = None
-    raw_size_chars: Optional[int] = None
+    artifact_ref: str | None = None
+    artifact_path: str | None = None
+    raw_size_chars: int | None = None
     truncated: bool = False
     title: str
-    metadata: Any = None
+    metadata: dict[str, object] | None = None
     time: TimeInfo
 
 
@@ -257,12 +266,12 @@ class ToolStateError(BaseModel):
     status: Literal["error"] = "error"
     input: ToolInput
     error: str
-    metadata: Optional[Any] = None
+    metadata: dict[str, object] | None = None
     time: TimeInfo
 
 
 ToolState = Annotated[
-    Union[ToolStatePending, ToolStateRunning, ToolStateCompleted, ToolStateError],
+    ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError,
     Discriminator("status"),
 ]
 
@@ -274,10 +283,12 @@ class ToolPart(PartBase):
     call_id: str
     tool: str
     state: ToolState
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, object] | None = None
 
     @classmethod
-    def create_running(cls, session_id: str, message_id: str, tool_call: "ToolCallPayload") -> "ToolPart":
+    def create_running(
+        cls, session_id: str, message_id: str, tool_call: "ToolCallPayload"
+    ) -> "ToolPart":
         """
         创建 running 状态的 ToolPart
 
@@ -406,7 +417,8 @@ class ToolPart(PartBase):
             metadata=self.metadata,
         )
 
-    def to_llm_format(self) -> Optional[Dict[str, Any]]:
+    @override
+    def to_llm_format(self) -> dict[str, object] | None:
         """
         工具调用贡献给 LLM 消息
 
@@ -415,7 +427,7 @@ class ToolPart(PartBase):
         - completed: 额外返回 tool_result
         - error: 额外返回 tool_result (错误信息)
         """
-        result: Dict[str, Any] = {"type": "tool"}
+        result: dict[str, object] = {"type": "tool"}
 
         # 1. tool_call（running、completed 或 error 状态）
         if self.state.status in ["running", "completed", "error"]:
@@ -436,7 +448,7 @@ class ToolPart(PartBase):
                 "tool_call_id": self.call_id,
             }
         elif self.state.status == "error":
-            error_state = cast(ToolStateError, self.state)
+            error_state = self.state
             error_msg = error_state.error or "Unknown error"
             result["tool_result"] = {
                 "role": "tool",
@@ -446,7 +458,7 @@ class ToolPart(PartBase):
 
         return result if len(result) > 1 else None  # 只有 type 时返回 None
 
-    def to_event_payload(self) -> Dict[str, Any]:
+    def to_event_payload(self) -> dict[str, object]:
         return {
             "id": self.id,
             "session_id": self.session_id,
@@ -463,8 +475,6 @@ class ToolPart(PartBase):
 
 # 完整 Part（存储/流转层，带 id/session_id/message_id）
 Part = Annotated[
-    Union[TextPart, ReasoningPart, ToolPart],
+    TextPart | ReasoningPart | ToolPart,
     Discriminator("type"),
 ]
-
-

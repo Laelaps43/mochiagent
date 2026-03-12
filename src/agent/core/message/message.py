@@ -2,7 +2,6 @@
 Message Container - Message = Info + Parts
 """
 
-from typing import List
 from pydantic import BaseModel, Field
 
 from .info import MessageInfo, SystemMessageInfo
@@ -17,7 +16,7 @@ class Message(BaseModel):
     """
 
     info: MessageInfo
-    parts: List[Part] = Field(default_factory=list)
+    parts: list[Part] = Field(default_factory=list)
 
     @classmethod
     def create_system(cls, content: str) -> "Message":

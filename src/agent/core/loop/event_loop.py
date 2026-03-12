@@ -8,20 +8,28 @@ Agent Event Loop - Agent事件循环
 from __future__ import annotations
 
 import json
-from typing import Any, TYPE_CHECKING
+from typing import cast
 
 from loguru import logger
 
 from agent.core.bus import MessageBus
+from agent.core.compression import CompactionPayload
 from agent.core.llm import AdapterRegistry
 from agent.core.loop.llm_turn_handler import LLMTurnHandler
 from agent.core.message import ToolPart
 from agent.core.runtime import StrategyKind
 from agent.core.session import SessionManager
-from agent.types import ContextBudget, Event, EventType, SessionState, TokenUsage, ToolCallPayload, ToolResult
+from agent.types import (
+    ContextBudget,
+    Event,
+    EventType,
+    SessionState,
+    TokenUsage,
+    ToolCallPayload,
+    ToolResult,
+)
 
-if TYPE_CHECKING:
-    from agent.framework import AgentFramework
+from agent.core.loop._framework_protocol import FrameworkProtocol
 
 
 class AgentEventLoop:
@@ -39,15 +47,15 @@ class AgentEventLoop:
         bus: MessageBus,
         session_manager: SessionManager,
         adapter_registry: AdapterRegistry,
-        framework: AgentFramework,
+        framework: FrameworkProtocol,
         max_iterations: int = 100,
     ):
-        self.bus = bus
-        self.session_manager = session_manager
-        self.adapter_registry = adapter_registry
-        self.framework = framework
-        self.max_iterations = max(1, max_iterations)
-        self._llm_turn_handler = LLMTurnHandler(
+        self.bus: MessageBus = bus
+        self.session_manager: SessionManager = session_manager
+        self.adapter_registry: AdapterRegistry = adapter_registry
+        self.framework: FrameworkProtocol = framework
+        self.max_iterations: int = max(1, max_iterations)
+        self._llm_turn_handler: LLMTurnHandler = LLMTurnHandler(
             session_manager=session_manager,
             adapter_registry=adapter_registry,
             framework=framework,
@@ -72,7 +80,7 @@ class AgentEventLoop:
         code: str | None = None,
         hint: str | None = None,
     ) -> None:
-        error_data: dict[str, str] = {"error": error_message}
+        error_data: dict[str, object] = {"error": error_message}
         if code:
             error_data["code"] = code
         if hint:
@@ -116,8 +124,7 @@ class AgentEventLoop:
             context = await self.session_manager.get_session(session_id)
             if not context.messages or context.messages[-1].role != "user":
                 raise ValueError(
-                    f"No user message found in context for session {session_id}. "
-                    "Please call context.build_user_message() first."
+                    f"No user message found in context for session {session_id}. Please call context.build_user_message() first."
                 )
 
             await self._conversation_loop(session_id)
@@ -153,7 +160,7 @@ class AgentEventLoop:
 
         try:
             iteration_count = 0
-            all_compaction_events: list = []
+            all_compaction_events: list[CompactionPayload] = []
 
             while iteration_count < self.max_iterations:
                 iteration_count += 1
@@ -166,7 +173,7 @@ class AgentEventLoop:
                     logger.info("LLM requested {} tool calls", len(tool_calls))
 
                     await self.session_manager.update_state(session_id, SessionState.WAITING_TOOL)
-                    await self._execute_tools(session_id, tool_calls)
+                    _ = await self._execute_tools(session_id, tool_calls)
                     await self.session_manager.update_state(session_id, SessionState.PROCESSING)
                     continue
 
@@ -223,7 +230,9 @@ class AgentEventLoop:
                     type=EventType.MESSAGE_DONE,
                     session_id=session_id,
                     data={
-                        "message_id": (context.current_message.message_id if context.current_message else None),
+                        "message_id": (
+                            context.current_message.message_id if context.current_message else None
+                        ),
                         "tokens": TokenUsage(),
                         "context_budget": context.context_budget,
                         "finish": "max_iterations_exceeded",
@@ -243,7 +252,9 @@ class AgentEventLoop:
             except Exception:
                 pass
 
-    async def _execute_tools(self, session_id: str, tool_calls: list[ToolCallPayload]) -> list[ToolResult]:
+    async def _execute_tools(
+        self, session_id: str, tool_calls: list[ToolCallPayload]
+    ) -> list[ToolResult]:
         context = await self.session_manager.get_session(session_id)
         message_id = context.current_message.message_id if context.current_message else None
 
@@ -254,8 +265,7 @@ class AgentEventLoop:
         agent = self.framework.get_agent(context.agent_name)
         if not agent:
             raise RuntimeError(
-                f"Agent '{context.agent_name}' not found. "
-                "Cannot execute tool calls without a registered agent."
+                f"Agent '{context.agent_name}' not found. Cannot execute tool calls without a registered agent."
             )
 
         tool_parts_map: dict[str, ToolPart] = {}
@@ -273,14 +283,15 @@ class AgentEventLoop:
             )
 
         results = await agent.tool_executor.execute_batch(tool_calls)
-        tool_args_by_call_id: dict[str, dict[str, Any]] = {}
+        tool_args_by_call_id: dict[str, dict[str, object]] = {}
         for tool_call in tool_calls:
             raw_args = tool_call.function.arguments or "{}"
+            parsed: dict[str, object]
             try:
-                parsed_args = json.loads(raw_args)
+                parsed = cast(dict[str, object], json.loads(raw_args))
             except Exception:
-                parsed_args = {"raw": raw_args}
-            tool_args_by_call_id[tool_call.id] = parsed_args
+                parsed = cast(dict[str, object], {"raw": raw_args})
+            tool_args_by_call_id[tool_call.id] = parsed
 
         for result in results:
             call_id = result.tool_call_id
@@ -297,14 +308,15 @@ class AgentEventLoop:
                     tool_arguments=tool_args_by_call_id.get(call_id, {}),
                     storage=self.session_manager.storage,
                 )
-                updated_part = original_part.update_to_completed(processed_result)
+                updated_part = original_part.update_to_completed(cast(ToolResult, processed_result))
             else:
                 updated_part = original_part.update_to_error(result)
 
-            for i, part in enumerate(context.current_message.parts):
-                if isinstance(part, ToolPart) and part.call_id == call_id:
-                    context.current_message.parts[i] = updated_part
-                    break
+            if context.current_message is not None:
+                for i, part in enumerate(context.current_message.parts):
+                    if isinstance(part, ToolPart) and part.call_id == call_id:
+                        context.current_message.parts[i] = updated_part
+                        break
 
             await self._emit_event(
                 Event(

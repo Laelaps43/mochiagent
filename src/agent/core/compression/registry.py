@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Mapping
+from collections.abc import Callable, Mapping
 
 from .compactor import ContextCompactor
 from .types import StrategyConfig
@@ -23,7 +23,9 @@ class ContextCompactorRegistry:
     def has(self, name: str) -> bool:
         return name.strip().lower() in self._factories
 
-    def create(self, name: str, options: Mapping[str, object] | StrategyConfig | None = None) -> ContextCompactor:
+    def create(
+        self, name: str, options: Mapping[str, object] | StrategyConfig | None = None
+    ) -> ContextCompactor:
         key = name.strip().lower()
         if key not in self._factories:
             available = ", ".join(sorted(self._factories.keys())) or "<none>"

@@ -4,12 +4,9 @@ Agent Context - Agent 运行上下文
 这个模块定义了 Agent 运行所需的外部依赖，封装了与 Framework 的交互。
 """
 
-from typing import List
-
+from agent.core.message import UserInput
 from loguru import logger
-
 from .core.bus import MessageBus
-from .core.message import UserInput
 from .core.utils import normalize_profile_id
 from .core.runtime import AgentStrategyManager
 from .core.session import SessionManager
@@ -32,11 +29,11 @@ class AgentContext:
         agent_name: str,
         llm_profiles: dict[str, LLMConfig],
     ) -> None:
-        self.session_manager = session_manager
-        self.message_bus = message_bus
-        self.strategy_manager = strategy_manager
-        self.agent_name = agent_name
-        self.llm_profiles = llm_profiles
+        self.session_manager: SessionManager = session_manager
+        self.message_bus: MessageBus = message_bus
+        self.strategy_manager: AgentStrategyManager = strategy_manager
+        self.agent_name: str = agent_name
+        self.llm_profiles: dict[str, LLMConfig] = llm_profiles
 
     def resolve_llm_config_for_agent(self, agent_name: str, profile_id: str) -> LLMConfig:
         if agent_name != self.agent_name:
@@ -49,8 +46,7 @@ class AgentContext:
         if normalized_profile not in self.llm_profiles:
             available = ", ".join(sorted(self.llm_profiles.keys())) or "<none>"
             raise ValueError(
-                f"LLM profile '{normalized_profile}' not available for agent '{agent_name}'. "
-                f"Available: {available}"
+                f"LLM profile '{normalized_profile}' not available for agent '{agent_name}'. Available: {available}"
             )
 
         return self.llm_profiles[normalized_profile]
@@ -68,9 +64,9 @@ class AgentContext:
     async def send_message(
         self,
         session_id: str,
-        message: List[UserInput],
+        message: list[UserInput],
     ) -> None:
-        await self.session_manager.add_user_message(session_id, message)
+        _ = await self.session_manager.add_user_message(session_id, message)
 
         await self.message_bus.publish(
             Event(

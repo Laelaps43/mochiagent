@@ -14,7 +14,7 @@ Designed for future extension:
 
 from __future__ import annotations
 
-from typing import Optional, Set
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,17 +22,17 @@ from agent.core.utils import parse_name_list
 
 
 class PolicyDecision(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     allowed: bool
     reason: str
 
 
 class ToolPolicyConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    allow: Optional[Set[str]] = None
-    deny: Optional[Set[str]] = None
+    allow: set[str] | None = None
+    deny: set[str] | None = None
 
     def normalized(self) -> "ToolPolicyConfig":
         return ToolPolicyConfig(
@@ -55,12 +55,12 @@ class ToolPolicyConfig(BaseModel):
 
 class ToolPolicyEngine:
     def __init__(self, config: ToolPolicyConfig):
-        self.config = config.normalized()
+        self.config: ToolPolicyConfig = config.normalized()
 
     def evaluate(self, tool_name: str) -> PolicyDecision:
         normalized = (tool_name or "").strip().lower()
 
-        if normalized in self.config.deny:
+        if normalized in (self.config.deny or set()):
             return PolicyDecision(
                 allowed=False,
                 reason=f"tool '{tool_name}' is denied by TOOLS_POLICY_DENY",

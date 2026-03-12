@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from .stage import CompactionStage
 from .types import CompactorRunOptions, CompactionResult
@@ -41,6 +41,7 @@ class ContextCompactor(ABC):
 class NoopContextCompactor(ContextCompactor):
     """Default compactor that never compacts."""
 
+    @override
     async def run(
         self,
         *,

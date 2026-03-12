@@ -6,7 +6,8 @@ import asyncio
 import random
 import time
 from contextlib import AsyncExitStack
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import cast
 
 import httpx
 from loguru import logger
@@ -42,8 +43,8 @@ class MCPManager:
     """Agent-scoped MCP runtime state manager."""
 
     def __init__(self, registry: ToolRegistry, default_timeout: int = 30):
-        self._registry = registry
-        self._default_timeout = default_timeout
+        self._registry: ToolRegistry = registry
+        self._default_timeout: int = default_timeout
         self._states: dict[str, MCPServerState] = {}
 
     @staticmethod
@@ -52,7 +53,10 @@ class MCPManager:
             return raw
         if isinstance(raw, dict):
             fields = set(MCPServerConfig.model_fields.keys())
-            return MCPServerConfig(**{k: v for k, v in raw.items() if k in fields})
+            raw_dict = cast(dict[str, object], raw)
+            return MCPServerConfig.model_validate(
+                {k: v for k, v in raw_dict.items() if k in fields}
+            )
         logger.warning(
             "MCP server config is not a dict (got {}), using empty config",
             type(raw).__name__,
@@ -73,9 +77,7 @@ class MCPManager:
             state.retry_max_ms = state.retry_initial_ms
         state.failure_threshold = to_int(cfg.failureThreshold, default=3, minimum=1)
         state.cooldown_sec = to_int(cfg.cooldownSec, default=20, minimum=1)
-        state.tool_timeout_sec = to_int(
-            cfg.toolTimeout, default=self._default_timeout, minimum=1
-        )
+        state.tool_timeout_sec = to_int(cfg.toolTimeout, default=self._default_timeout, minimum=1)
         self._states[server_name] = state
         return state
 
@@ -204,7 +206,7 @@ class MCPManager:
             while attempt < attempts and not connected:
                 attempt += 1
                 attempt_stack = AsyncExitStack()
-                await attempt_stack.__aenter__()
+                _ = await attempt_stack.__aenter__()
                 attempt_ok = False
                 try:
                     if cfg.command:
@@ -280,7 +282,7 @@ class MCPManager:
                                     raise transport_errors[0]
                                 raise ExceptionGroup(
                                     f"remote transport attempts failed for {remote_url}",
-                                    transport_errors,
+                                    [e for e in transport_errors if isinstance(e, Exception)],
                                 )
                             raise RuntimeError(
                                 f"failed to create remote transport for {remote_url}"
@@ -299,7 +301,7 @@ class MCPManager:
                         attempt_stack.enter_async_context(ClientSession(read, write)),
                         timeout=state.connect_timeout_ms / 1000,
                     )
-                    await asyncio.wait_for(
+                    _ = await asyncio.wait_for(
                         session.initialize(),
                         timeout=state.connect_timeout_ms / 1000,
                     )
@@ -331,7 +333,7 @@ class MCPManager:
                         state.tool_count,
                     )
                     committed_stack = attempt_stack.pop_all()
-                    stack.push_async_callback(committed_stack.aclose)
+                    _ = stack.push_async_callback(committed_stack.aclose)
                     attempt_ok = True
                     connected = True
                 except Exception as exc:

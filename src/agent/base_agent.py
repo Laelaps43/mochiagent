@@ -4,7 +4,7 @@ import json
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Union, List, Optional
+from typing import TYPE_CHECKING, cast
 
 from loguru import logger
 
@@ -39,14 +39,14 @@ class BaseAgent(ABC):
         tools: ToolRuntimeConfig | None = None,
     ):
         # 运行上下文（由 Framework 注入）
-        self._ctx: Optional[AgentContext] = None
+        self._ctx: AgentContext | None = None
 
         tool_runtime = tools or ToolRuntimeConfig()
-        self.tool_runtime = tool_runtime
+        self.tool_runtime: ToolRuntimeConfig = tool_runtime
 
         # Agent 的内部组件
-        self.tool_registry = ToolRegistry()
-        self.tool_executor = ToolExecutor(
+        self.tool_registry: ToolRegistry = ToolRegistry()
+        self.tool_executor: ToolExecutor = ToolExecutor(
             self.tool_registry,
             default_timeout=tool_runtime.timeout,
             policy_allow=tool_runtime.policy.allow,
@@ -62,7 +62,7 @@ class BaseAgent(ABC):
 
         # Skills registered by this agent
         self._registered_skills: dict[str, Skill] = {}
-        self._skill_tool: Optional[SkillTool] = None  # 缓存统一的 skill tool
+        self._skill_tool: SkillTool | None = None  # 缓存统一的 skill tool
         self._mcp_stack: AsyncExitStack | None = None
         self._mcp_manager: MCPManager | None = None
 
@@ -107,7 +107,7 @@ class BaseAgent(ABC):
         """Agent 初始化钩子（注册工具和 skills）"""
         pass
 
-    def get_system_prompt(self, context: "SessionContext") -> str | None:
+    def get_system_prompt(self, _context: "SessionContext") -> str | None:
         """
         返回当前 agent 的专属 system prompt（可选覆盖）
 
@@ -154,12 +154,12 @@ class BaseAgent(ABC):
             return
 
         try:
-            payload = json.loads(config_path.read_text(encoding="utf-8"))
+            payload = cast(dict[str, object], json.loads(config_path.read_text(encoding="utf-8")))
         except Exception as exc:
             logger.error("Failed to read MCP config '{}': {}", config_path, exc)
             return
 
-        mcp_servers = payload.get("mcpServers")
+        mcp_servers = cast("dict[str, object] | None", payload.get("mcpServers"))
         if not isinstance(mcp_servers, dict) or not mcp_servers:
             logger.info("No mcpServers configured in {}", config_path)
             return
@@ -172,7 +172,7 @@ class BaseAgent(ABC):
 
         stack = AsyncExitStack()
         try:
-            await stack.__aenter__()
+            _ = await stack.__aenter__()
             registered = await manager.connect_servers(
                 mcp_servers=mcp_servers,
                 stack=stack,
@@ -319,14 +319,13 @@ class BaseAgent(ABC):
 
         skill_names = list(self._registered_skills.keys())
         logger.info(
-            f"Agent '{self.name}' updated skill tool with "
-            f"{len(self._registered_skills)} skills: {skill_names}"
+            f"Agent '{self.name}' updated skill tool with {len(self._registered_skills)} skills: {skill_names}"
         )
 
     async def push_message(
         self,
         session_id: str,
-        message: Union[str, List[UserInput]],
+        message: str | list[UserInput],
     ) -> None:
         """
         发送消息到会话
@@ -350,7 +349,7 @@ class BaseAgent(ABC):
     async def take_session(
         self,
         session_id: str,
-        model_profile_id: Optional[str] = None,
+        model_profile_id: str | None = None,
     ) -> Session:
         """
         接管会话并返回 Session 对象
@@ -389,7 +388,7 @@ class BaseAgent(ABC):
 
         return session
 
-    async def handle_event(self, event: Event) -> None:
+    async def handle_event(self, _event: Event) -> None:
         """
         处理事件（可选覆盖）
 

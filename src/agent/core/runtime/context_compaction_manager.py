@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Mapping
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -26,21 +27,21 @@ if TYPE_CHECKING:
 
 
 class _AgentCompactorBinding:
-    __slots__ = ("name", "config", "compactor")
+    __slots__: tuple[str, ...] = ("name", "config", "compactor")
 
     def __init__(self, name: str, config: StrategyConfig, compactor: ContextCompactor) -> None:
-        self.name = name
-        self.config = config
-        self.compactor = compactor
+        self.name: str = name
+        self.config: StrategyConfig = config
+        self.compactor: ContextCompactor = compactor
 
 
 class ContextCompactionManager:
     def __init__(self) -> None:
-        self._registry = ContextCompactorRegistry()
+        self._registry: ContextCompactorRegistry = ContextCompactorRegistry()
         self._registry.register("default", lambda _opts: DefaultContextCompactor())
         self._registry.register("noop", lambda _opts: NoopContextCompactor())
-        self._default_name = "default"
-        self._default = self._registry.create("default")
+        self._default_name: str = "default"
+        self._default: ContextCompactor = self._registry.create("default")
         self._agent_compactors: dict[str, _AgentCompactorBinding] = {}
 
     def register(self, name: str, factory: CompactorFactory) -> None:

@@ -2,8 +2,6 @@
 Tool Registry - 工具注册表
 """
 
-from typing import Dict, List
-
 from loguru import logger
 
 from .base import Tool
@@ -17,7 +15,7 @@ class ToolRegistry:
     """
 
     def __init__(self):
-        self._tools: Dict[str, Tool] = {}
+        self._tools: dict[str, Tool] = {}
         logger.info("ToolRegistry initialized")
 
     def register(self, tool: Tool) -> None:
@@ -37,10 +35,10 @@ class ToolRegistry:
     def has(self, tool_name: str) -> bool:
         return tool_name in self._tools
 
-    def list_tools(self) -> List[str]:
+    def list_tools(self) -> list[str]:
         return list(self._tools.keys())
 
-    def get_definitions(self) -> List[ToolDefinition]:
+    def get_definitions(self) -> list[ToolDefinition]:
         return [tool.to_definition() for tool in self._tools.values()]
 
     def clear(self) -> None:

@@ -1,6 +1,6 @@
 """异步Agent框架 - 基于事件驱动的多Agent系统"""
 
-from typing import Type, List, Optional, Mapping
+from collections.abc import Callable, Mapping
 
 from loguru import logger
 
@@ -42,25 +42,23 @@ from .config import (
     WorkspaceConfig,
 )
 
-_registered_agent_classes: List[Type[BaseAgent]] = []
+_registered_agent_classes: list[type[BaseAgent]] = []
 
 
-def agent(cls: Type[BaseAgent]) -> Type[BaseAgent]:
+def agent(cls: type[BaseAgent]) -> type[BaseAgent]:
     """Agent 装饰器 - 自动注册 Agent 类"""
-    if not issubclass(cls, BaseAgent):
-        raise TypeError(f"{cls.__name__} must inherit from BaseAgent")
     _registered_agent_classes.append(cls)
     return cls
 
 
-def get_registered_agents() -> List[Type[BaseAgent]]:
+def get_registered_agents() -> list[type[BaseAgent]]:
     return _registered_agent_classes.copy()
 
 
 async def setup(
-    storage: Optional[StorageProvider] = None,
-    agents: Optional[List[BaseAgent]] = None,
-    llm_configs: Optional[List[LLMConfig]] = None,
+    storage: StorageProvider | None = None,
+    agents: list[BaseAgent] | None = None,
+    llm_configs: list[LLMConfig] | None = None,
     max_concurrent: int = 50,
     max_iterations: int = 100,
 ) -> None:
@@ -83,9 +81,7 @@ async def setup(
     if resolved_storage is None:
         resolved_storage = MemoryStorage()
         logger.warning(
-            "Using default MemoryStorage. This backend is for development/testing only "
-            "and may be incomplete for production persistence. "
-            "Please provide a custom StorageProvider in production."
+            "Using default MemoryStorage. This backend is for development/testing only and may be incomplete for production persistence. Please provide a custom StorageProvider in production."
         )
 
     # 初始化框架
@@ -101,25 +97,25 @@ async def setup(
             await framework.register_agent(agent_instance)
 
 
-def get_agent(agent_name: str) -> Optional[BaseAgent]:
+def get_agent(agent_name: str) -> BaseAgent | None:
     """获取已注册的 Agent"""
     framework = get_framework()
     return framework.get_agent(agent_name)
 
 
-def list_agents() -> List[str]:
+def list_agents() -> list[str]:
     """列出所有已注册的 Agent 名称"""
     framework = get_framework()
     return framework.list_agents()
 
 
-def register_strategy(kind: StrategyKind, name: str, factory) -> None:
+def register_strategy(kind: StrategyKind, name: str, factory: Callable[..., object]) -> None:
     """注册某类策略工厂。"""
     framework = get_framework()
     framework.strategy_manager.register(kind, name, factory)
 
 
-def list_strategies(kind: StrategyKind) -> List[str]:
+def list_strategies(kind: StrategyKind) -> list[str]:
     """列出某类已注册策略名。"""
     framework = get_framework()
     return framework.strategy_manager.list(kind)
@@ -129,7 +125,7 @@ def set_agent_strategy(
     kind: StrategyKind,
     agent_name: str,
     name: str,
-    options: Optional[Mapping[str, object]] = None,
+    options: Mapping[str, object] | None = None,
 ) -> None:
     """设置某个 Agent 使用的指定策略。"""
     framework = get_framework()

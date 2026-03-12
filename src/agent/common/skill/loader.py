@@ -6,7 +6,6 @@ structure where each skill is defined in a SKILL.md file with YAML frontmatter.
 """
 
 from pathlib import Path
-from typing import Optional
 
 import frontmatter
 from loguru import logger
@@ -21,13 +20,13 @@ class Skill:
     frontmatter containing metadata.
     """
 
-    __slots__ = ("name", "description", "content", "location")
+    __slots__: tuple[str, ...] = ("name", "description", "content", "location")
 
     def __init__(self, name: str, description: str, content: str, location: Path) -> None:
-        self.name = name
-        self.description = description
-        self.content = content
-        self.location = location
+        self.name: str = name
+        self.description: str = description
+        self.content: str = content
+        self.location: Path = location
 
     def render(self, context: str = "") -> str:
         content = self.content
@@ -58,9 +57,9 @@ class SkillLoader:
         Args:
             skill_directory: Root directory containing skill subdirectories
         """
-        self.skill_directory = skill_directory
+        self.skill_directory: Path = skill_directory
 
-    def load_skill(self, name: str) -> Optional[Skill]:
+    def load_skill(self, name: str) -> Skill | None:
         """
         Load a single skill by name.
 
@@ -77,7 +76,7 @@ class SkillLoader:
         root = self.skill_directory.resolve(strict=False)
         skill_dir = (root / name).resolve(strict=False)
         try:
-            skill_dir.relative_to(root)
+            _ = skill_dir.relative_to(root)
         except ValueError:
             logger.error("Invalid skill name '{}' (outside skill directory '{}')", name, root)
             return None
@@ -89,8 +88,8 @@ class SkillLoader:
             return None
 
         try:
-            post = frontmatter.load(skill_file)
-            skill_name = post.get("name") or name
+            post = frontmatter.load(str(skill_file))
+            skill_name = str(post.get("name") or name)
 
             description = post.get("description")
             if not description:
@@ -98,7 +97,7 @@ class SkillLoader:
 
             skill = Skill(
                 name=skill_name,
-                description=description,
+                description=str(description or ""),
                 content=post.content,
                 location=skill_file,
             )

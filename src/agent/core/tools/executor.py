@@ -5,11 +5,12 @@ Tool Executor - 工具执行器
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import cast
 
 from loguru import logger
 
 from .policy import ToolPolicyConfig, ToolPolicyEngine
+from .base import Tool
 from .registry import ToolRegistry
 from .security_guard import ToolSecurityConfig, ToolSecurityGuard
 from agent.types import ToolCallPayload, ToolResult
@@ -39,15 +40,15 @@ class ToolExecutor:
             registry: 工具注册表
             default_timeout: 默认超时时间(秒),默认30秒
         """
-        self.registry = registry
-        self.default_timeout = default_timeout
-        self.policy = policy or ToolPolicyEngine(
+        self.registry: ToolRegistry = registry
+        self.default_timeout: int = default_timeout
+        self.policy: ToolPolicyEngine = policy or ToolPolicyEngine(
             config=ToolPolicyConfig(
                 allow=policy_allow,
                 deny=policy_deny,
             )
         )
-        self.security_guard = ToolSecurityGuard(
+        self.security_guard: ToolSecurityGuard = ToolSecurityGuard(
             root=Path(workspace_root) if workspace_root else Path.cwd(),
             restrict=restrict_to_workspace,
             config=security or ToolSecurityConfig(),
@@ -73,7 +74,7 @@ class ToolExecutor:
         try:
             # 解析参数
             try:
-                arguments = json.loads(arguments_str)
+                arguments = cast(dict[str, object], json.loads(arguments_str))
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse tool arguments: {e}")
                 return ToolResult(
@@ -101,8 +102,7 @@ class ToolExecutor:
             decision = self.policy.evaluate(tool_name)
             if not decision.allowed:
                 logger.warning(
-                    f"Tool '{tool_name}' blocked by policy: {decision.reason} "
-                    f"(call_id={tool_call_id})"
+                    f"Tool '{tool_name}' blocked by policy: {decision.reason} (call_id={tool_call_id})"
                 )
                 return ToolResult(
                     tool_call_id=tool_call_id,
@@ -192,7 +192,7 @@ class ToolExecutor:
 
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        results = []
+        results: list[ToolResult] = []
         for i, raw_result in enumerate(raw_results):
             if isinstance(raw_result, Exception):
                 tool_call = tool_calls[i]
@@ -214,14 +214,14 @@ class ToolExecutor:
                     )
                 )
             else:
-                results.append(raw_result)
+                results.append(cast(ToolResult, raw_result))
 
         success_count = sum(1 for r in results if r.success)
         logger.info(f"Batch execution completed: {success_count}/{len(tool_calls)} succeeded")
 
         return results
 
-    def _validate_arguments(self, tool, arguments: Dict[str, Any]) -> None:
+    def _validate_arguments(self, tool: Tool, arguments: dict[str, object]) -> None:
         """
         验证工具参数是否符合 schema
 
@@ -239,7 +239,7 @@ class ToolExecutor:
             logger.warning("jsonschema not installed, skipping parameter validation")
             return
 
-        schema = tool.parameters_schema
+        schema: dict[str, object] = tool.parameters_schema
         try:
             validate(instance=arguments, schema=schema)
         except ValidationError as e:

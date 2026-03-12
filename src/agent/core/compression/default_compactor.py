@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from agent.core.llm.errors import is_context_overflow_error as _is_context_overflow
 from agent.types import ContextBudget, LLMConfig, LLMStreamChunk
@@ -16,7 +16,14 @@ from agent.core.compression.types import (
     RewriteStats,
     SummaryBuildResult,
 )
-from agent.core.message import Message as InternalMessage, TextPart, ToolPart, UserMessageInfo, UserTextInput
+from agent.core.message import (
+    Message as InternalMessage,
+    ReasoningPart,
+    TextPart,
+    ToolPart,
+    UserMessageInfo,
+    UserTextInput,
+)
 from agent.core.compression.stage import CompactionStage
 from agent.core.utils import estimate_tokens
 
@@ -47,6 +54,7 @@ class DefaultContextCompactor(ContextCompactor):
     - mid_turn: compact only when token limit was reached and follow-up is required
     """
 
+    @override
     async def run(
         self,
         *,
@@ -134,9 +142,7 @@ class DefaultContextCompactor(ContextCompactor):
                 "stage": stage_value,
                 "trigger": trigger.metadata,
                 "summary_trimmed_count": summary_result.trimmed_count,
-                "summary_tokens_estimated": estimate_tokens(
-                    summary_text, options.chars_per_token
-                ),
+                "summary_tokens_estimated": estimate_tokens(summary_text, options.chars_per_token),
                 "summary_request_retries": summary_result.retries,
             },
             stats={
@@ -167,7 +173,9 @@ class DefaultContextCompactor(ContextCompactor):
 
         # Provider returned a context-overflow error, so compaction is mandatory.
         if stage is CompactionStage.OVERFLOW_ERROR:
-            return CompactionDecision(apply=True, reason="overflow_error", metadata={"stage": stage_value})
+            return CompactionDecision(
+                apply=True, reason="overflow_error", metadata={"stage": stage_value}
+            )
 
         if stage is CompactionStage.MID_TURN:
             # Mid-turn compaction is reserved for "continue generation" style flows:
@@ -185,13 +193,6 @@ class DefaultContextCompactor(ContextCompactor):
             )
 
         # Pre-call is the default auto-compaction checkpoint.
-        if stage is not CompactionStage.PRE_CALL:
-            return CompactionDecision(
-                apply=False,
-                reason="unsupported_stage",
-                metadata={"stage": stage_value},
-            )
-
         total_tokens = llm_config.context_window_tokens
         # 注意：这里使用"会话文本长度估算"而不是 budget.used_tokens。
         # 原因是 budget 可能来自上轮或 provider usage，不能完全代表"当前可发送历史"的体积。
@@ -264,11 +265,13 @@ class DefaultContextCompactor(ContextCompactor):
                         session_id=session_context.session_id,
                         agent=session_context.agent_name,
                     ),
-                    parts=[TextPart.create_fast(
-                        session_id=session_context.session_id,
-                        message_id="compaction_req",
-                        text=prompt,
-                    )],
+                    parts=[
+                        TextPart.create_fast(
+                            session_id=session_context.session_id,
+                            message_id="compaction_req",
+                            text=prompt,
+                        )
+                    ],
                 )
                 response = await llm_provider.complete(
                     messages=base_messages + [prompt_msg],
@@ -292,7 +295,7 @@ class DefaultContextCompactor(ContextCompactor):
                     and len(base_messages) > 1
                     and trimmed < max_trims
                 ):
-                    base_messages.pop(0)
+                    _ = base_messages.pop(0)
                     trimmed += 1
                     continue
 
@@ -304,7 +307,7 @@ class DefaultContextCompactor(ContextCompactor):
                     )
 
                 retries += 1
-                await asyncio.sleep((retry_sleep_ms / 1000.0) * (2 ** (retries - 1)))
+                await asyncio.sleep((retry_sleep_ms / 1000.0) * (2.0 ** (retries - 1)))
 
     def _rewrite_messages(
         self,
@@ -377,15 +380,17 @@ class DefaultContextCompactor(ContextCompactor):
         session_context.messages = []
         session_context.current_message = None
         for text in retained_texts:
-            session_context.build_user_message(parts=[UserTextInput(text=text)])
-        session_context.build_user_message(
+            _ = session_context.build_user_message(parts=[UserTextInput(text=text)])
+        _ = session_context.build_user_message(
             parts=[UserTextInput(text=f"{summary_prefix}{summary_text.strip()}")]
         )
 
         # 关键约束：最新真实 user 需保持在末尾，避免下一轮对 summary 直接回复
         if last_user_text.strip():
             summary_message = session_context.messages.pop()
-            session_context.messages.insert(max(len(session_context.messages) - 1, 0), summary_message)
+            session_context.messages.insert(
+                max(len(session_context.messages) - 1, 0), summary_message
+            )
 
         return RewriteStats(
             before_messages=before_messages,
@@ -395,18 +400,17 @@ class DefaultContextCompactor(ContextCompactor):
         )
 
     @staticmethod
-    def _message_text(message: object) -> str:
+    def _message_text(message: InternalMessage) -> str:
         chunks: list[str] = []
-        for part in message.parts:  # type: ignore[attr-defined]
-            if part.type in {"text", "reasoning"}:
-                if hasattr(part, "text") and isinstance(part.text, str) and part.text:
-                    chunks.append(part.text)
+        for part in message.parts:
+            if isinstance(part, (TextPart, ReasoningPart)) and part.text:
+                chunks.append(part.text)
         return "".join(chunks)
 
     @staticmethod
-    def _find_last_user_index(messages: list[object]) -> int | None:
+    def _find_last_user_index(messages: list[InternalMessage]) -> int | None:
         for idx in range(len(messages) - 1, -1, -1):
-            if messages[idx].role == "user":  # type: ignore[attr-defined]
+            if messages[idx].info.role == "user":
                 return idx
         return None
 

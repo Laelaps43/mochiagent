@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Callable, Mapping
+from collections.abc import Callable, Mapping
 
 from .postprocessor_types import ToolPostprocessorConfig
 from .result_postprocessor import ToolResultPostProcessorStrategy
 
-ToolResultPostProcessorFactory = Callable[[ToolPostprocessorConfig], ToolResultPostProcessorStrategy]
+ToolResultPostProcessorFactory = Callable[
+    [ToolPostprocessorConfig], ToolResultPostProcessorStrategy
+]
 
 
 class ToolResultPostProcessorRegistry:

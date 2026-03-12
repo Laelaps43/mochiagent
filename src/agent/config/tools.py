@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Set
+from typing import ClassVar
+
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class ToolPolicyConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    allow: Set[str] = Field(default_factory=set)
-    deny: Set[str] = Field(default_factory=set)
+    allow: set[str] = Field(default_factory=set)
+    deny: set[str] = Field(default_factory=set)
 
     @classmethod
     def from_csv(cls, *, allow_csv: str = "", deny_csv: str = "") -> "ToolPolicyConfig":
@@ -25,22 +26,22 @@ class ToolPolicyConfig(BaseModel):
 
 
 class WorkspaceConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     root: Path = Field(default_factory=Path.cwd)
     restrict: bool = True
 
 
 class ToolSecurityConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     enforce_workspace: bool = True
     enforce_command_guard: bool = True
-    command_deny_tokens: Set[str] = Field(default_factory=lambda: {"`", "$(", "\n", "\r"})
+    command_deny_tokens: set[str] = Field(default_factory=lambda: {"`", "$(", "\n", "\r"})
 
 
 class ToolRuntimeConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     timeout: int = 30
     policy: ToolPolicyConfig = Field(default_factory=ToolPolicyConfig)

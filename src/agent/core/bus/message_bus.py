@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import defaultdict
-from typing import Callable, Dict, List, Optional
+from collections.abc import Awaitable, Callable
 
 from loguru import logger
 
@@ -14,19 +14,25 @@ class MessageBus:
     """异步消息总线 - 支持事件订阅、发布和外部监听"""
 
     def __init__(self, max_concurrent: int = 50):
-        self._subscribers: Dict[EventType, List[Callable]] = defaultdict(list)
-        self._queue: asyncio.Queue = asyncio.Queue()
-        self._running = False
-        self._process_task: Optional[asyncio.Task] = None
-        self._max_concurrent = max_concurrent
+        self._subscribers: dict[EventType, list[Callable[["Event"], Awaitable[None]]]] = (
+            defaultdict(list)
+        )
+        self._queue: asyncio.Queue[Event] = asyncio.Queue()
+        self._running: bool = False
+        self._process_task: asyncio.Task[None] | None = None
+        self._max_concurrent: int = max_concurrent
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrent)
         logger.info(f"MessageBus initialized with max_concurrent={max_concurrent}")
 
-    def subscribe(self, event_type: EventType, handler: Callable) -> None:
+    def subscribe(
+        self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
+    ) -> None:
         self._subscribers[event_type].append(handler)
         logger.debug(f"Subscribed to {event_type.value}: {handler.__name__}")
 
-    def unsubscribe(self, event_type: EventType, handler: Callable) -> None:
+    def unsubscribe(
+        self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
+    ) -> None:
         if event_type in self._subscribers:
             self._subscribers[event_type].remove(handler)
             logger.debug(f"Unsubscribed from {event_type.value}: {handler.__name__}")
@@ -59,8 +65,7 @@ class MessageBus:
                 for i, result in enumerate(results):
                     if isinstance(result, Exception):
                         logger.error(
-                            f"Handler {handlers[i].__name__} failed for event "
-                            f"{event.type.value}: {result}"
+                            f"Handler {handlers[i].__name__} failed for event {event.type.value}: {result}"
                         )
 
     async def start(self) -> None:

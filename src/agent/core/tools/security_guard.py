@@ -10,51 +10,53 @@ from __future__ import annotations
 
 import shlex
 from pathlib import Path
-from typing import Any, Mapping, Optional, Set
+from collections.abc import Mapping
+from typing import ClassVar, cast
 
 from pydantic import BaseModel, ConfigDict
 
 
 class SecurityDecision(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     allowed: bool
     reason: str
 
 
 class ToolSecurityConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     enforce_workspace: bool = True
     enforce_command_guard: bool = True
-    command_deny_tokens: Optional[Set[str]] = None
+    command_deny_tokens: set[str] | None = None
 
 
 class ToolSecurityGuard:
     def __init__(self, root: str | Path, restrict: bool, config: ToolSecurityConfig):
-        self.root = Path(root).resolve(strict=False)
-        self.restrict = restrict
-        self.config = config
+        self.root: Path = Path(root).resolve(strict=False)
+        self.restrict: bool = restrict
+        self.config: ToolSecurityConfig = config
 
-    def validate_tool_call(self, tool: Any, arguments: Mapping[str, Any]) -> SecurityDecision:
-        schema = getattr(tool, "parameters_schema", {}) or {}
-        properties = schema.get("properties", {}) or {}
+    def validate_tool_call(self, tool: object, arguments: Mapping[str, object]) -> SecurityDecision:
+        schema = cast(dict[str, object], getattr(tool, "parameters_schema", {}) or {})
+        properties = cast(dict[str, object], schema.get("properties") or {})
 
         for key, prop in properties.items():
             if not isinstance(prop, dict):
                 continue
+            prop_d = cast(dict[str, object], prop)
             value = arguments.get(key)
             if value is None:
                 continue
 
-            if (prop.get("x-workspace-path") or prop.get("x-workspace-cwd")) and isinstance(
+            if (prop_d.get("x-workspace-path") or prop_d.get("x-workspace-cwd")) and isinstance(
                 value, str
             ):
                 decision = self._validate_path(value)
                 if not decision.allowed:
                     return decision
 
-            if prop.get("x-shell-command") and isinstance(value, str):
+            if prop_d.get("x-shell-command") and isinstance(value, str):
                 decision = self._validate_shell_command(value, arguments)
                 if not decision.allowed:
                     return decision
@@ -76,7 +78,7 @@ class ToolSecurityGuard:
     def _validate_shell_command(
         self,
         command: str,
-        arguments: Mapping[str, Any],
+        arguments: Mapping[str, object],
     ) -> SecurityDecision:
         if not self.config.enforce_command_guard:
             return SecurityDecision(allowed=True, reason="command guard disabled")
@@ -165,7 +167,7 @@ class ToolSecurityGuard:
 
     def _is_inside_root(self, path: Path) -> bool:
         try:
-            path.relative_to(self.root)
+            _ = path.relative_to(self.root)
             return True
         except ValueError:
             return False

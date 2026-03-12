@@ -4,26 +4,38 @@ from __future__ import annotations
 
 from copy import deepcopy
 import time
-from typing import Awaitable, Callable, TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, cast
 
 from loguru import logger
 
 from agent.core.compression import CompactionPayload, CompactionStage
 from agent.core.llm import AdapterRegistry
-from agent.core.llm.errors import LLMProviderError, is_context_overflow_error as _is_context_overflow
+from agent.core.llm.errors import (
+    LLMProviderError,
+    is_context_overflow_error as _is_context_overflow,
+)
 from agent.core.loop.turn_result import LLMTurnResult
 from agent.core.message import Message as InternalMessage, ReasoningPart, TextPart
 from agent.core.message.info import AssistantMessageInfo
 from agent.core.runtime import StrategyKind
 from agent.core.session import SessionManager
 from agent.core.utils import extract_turn_tokens
-from agent.types import ContextBudget, Event, EventType, LLMConfig, ProviderUsage, TokenUsage, ToolCallPayload
+from agent.types import (
+    ContextBudget,
+    Event,
+    EventType,
+    LLMConfig,
+    ProviderUsage,
+    ToolCallPayload,
+)
+
+from agent.core.loop._framework_protocol import FrameworkProtocol
 
 if TYPE_CHECKING:
     from agent.core.llm.base import LLMProvider
     from agent.core.runtime.strategy_manager import AgentStrategyManager
     from agent.core.session.context import SessionContext
-    from agent.framework import AgentFramework
 
 
 class LLMTurnHandler:
@@ -32,21 +44,20 @@ class LLMTurnHandler:
         *,
         session_manager: SessionManager,
         adapter_registry: AdapterRegistry,
-        framework: AgentFramework,
+        framework: FrameworkProtocol,
         emit_event: Callable[[Event], Awaitable[None]],
     ) -> None:
-        self.session_manager = session_manager
-        self.adapter_registry = adapter_registry
-        self.framework = framework
-        self._emit_event = emit_event
+        self.session_manager: SessionManager = session_manager
+        self.adapter_registry: AdapterRegistry = adapter_registry
+        self.framework: FrameworkProtocol = framework
+        self._emit_event: Callable[[Event], Awaitable[None]] = emit_event
 
     async def run(self, session_id: str) -> LLMTurnResult:
         context = await self.session_manager.get_session(session_id)
 
         if not context.model_profile_id:
             raise ValueError(
-                f"Session {session_id} has no model_profile_id. "
-                "Please take_session with a valid model_profile_id first."
+                f"Session {session_id} has no model_profile_id. Please take_session with a valid model_profile_id first."
             )
 
         agent = self.framework.get_agent(context.agent_name)
@@ -73,7 +84,9 @@ class LLMTurnHandler:
             await self._persist_session_metadata(session_id)
 
         # 复用已有的 assistant message（tool_calls 轮次），或创建新的
-        if context.current_message and isinstance(context.current_message.info, AssistantMessageInfo):
+        if context.current_message and isinstance(
+            context.current_message.info, AssistantMessageInfo
+        ):
             assistant_msg = context.current_message
         else:
             last_user_msg = context.messages[-1]
@@ -201,7 +214,9 @@ class LLMTurnHandler:
 
                 break
             except Exception as exc:
-                if overflow_retries >= max_overflow_retries or not self.is_context_overflow_error(exc):
+                if overflow_retries >= max_overflow_retries or not self.is_context_overflow_error(
+                    exc
+                ):
                     raise
 
                 overflow_retries += 1
@@ -223,9 +238,10 @@ class LLMTurnHandler:
                 continue
 
         turn_tokens, source = extract_turn_tokens(provider_usage)
-        assistant_msg.info.tokens.input += turn_tokens.input
-        assistant_msg.info.tokens.output += turn_tokens.output
-        assistant_msg.info.tokens.reasoning += turn_tokens.reasoning
+        assistant_info = cast(AssistantMessageInfo, assistant_msg.info)
+        assistant_info.tokens.input += turn_tokens.input
+        assistant_info.tokens.output += turn_tokens.output
+        assistant_info.tokens.reasoning += turn_tokens.reasoning
 
         context_budget: ContextBudget = context.update_context_budget(
             total_tokens=llm_config.context_window_tokens,
@@ -235,7 +251,6 @@ class LLMTurnHandler:
             source=source,
         )
         await self._persist_session_metadata(session_id)
-
 
         last_compaction = (
             compaction_events[-1]
@@ -247,7 +262,7 @@ class LLMTurnHandler:
             thinking=thinking_buffer,
             tool_calls=accumulated_tool_calls,
             finish_reason=finish_reason,
-            tokens=assistant_msg.info.tokens,
+            tokens=cast(AssistantMessageInfo, assistant_msg.info).tokens,
             context_budget=context_budget,
             context_compaction=last_compaction,
             context_compaction_events=compaction_events,

@@ -7,15 +7,16 @@ import json
 import shutil
 import time
 from pathlib import Path
-from typing import Any
+from typing import override
 from uuid import uuid4
 
 from loguru import logger
 
+from agent.types import SessionMetadataData
+
 from .provider import (
     ArtifactMetadata,
     ArtifactReadResult,
-    SessionMetadataData,
     StorageProvider,
 )
 
@@ -36,28 +37,29 @@ class MemoryStorage(StorageProvider):
 
     def __init__(self, artifact_root: str | Path | None = None):
         self._sessions: dict[str, SessionMetadataData] = {}
-        self._messages: dict[str, list[dict[str, Any]]] = {}
-        self._artifact_root = (
+        self._messages: dict[str, list[dict[str, object]]] = {}
+        self._artifact_root: Path = (
             Path(artifact_root) if artifact_root else (Path.cwd() / ".agent" / "artifacts")
         )
         self._artifact_root.mkdir(parents=True, exist_ok=True)
         logger.info("MemoryStorage initialized")
         logger.warning(
-            "MemoryStorage is a lightweight in-process backend and is not a complete "
-            "production-grade persistence solution. Data is process-local and may be lost "
-            "after restart."
+            "MemoryStorage is a lightweight in-process backend and is not a complete production-grade persistence solution. Data is process-local and may be lost after restart."
         )
 
+    @override
     async def save_session(self, session_id: str, session_data: SessionMetadataData) -> None:
         self._sessions[session_id] = session_data
         logger.debug(f"Saved session metadata to memory: {session_id}")
 
+    @override
     async def load_session(self, session_id: str) -> SessionMetadataData | None:
         data = self._sessions.get(session_id)
         if data:
             logger.debug(f"Loaded session metadata from memory: {session_id}")
         return data
 
+    @override
     async def delete_session(self, session_id: str) -> None:
         if session_id in self._sessions:
             del self._sessions[session_id]
@@ -67,37 +69,42 @@ class MemoryStorage(StorageProvider):
             logger.debug(f"Deleted messages from memory: {session_id}")
         await self.delete_artifacts(session_id)
 
+    @override
     async def session_exists(self, session_id: str) -> bool:
         return session_id in self._sessions
 
+    @override
     async def list_sessions(self) -> list[str]:
         return list(self._sessions.keys())
 
-    async def save_message(self, session_id: str, message_data: dict[str, Any]) -> None:
+    @override
+    async def save_message(self, session_id: str, message_data: dict[str, object]) -> None:
         if session_id not in self._messages:
             self._messages[session_id] = []
         self._messages[session_id].append(message_data)
         logger.debug(
-            f"Saved message to memory: {session_id}, "
-            f"total messages: {len(self._messages[session_id])}"
+            f"Saved message to memory: {session_id}, total messages: {len(self._messages[session_id])}"
         )
 
-    async def load_messages(self, session_id: str) -> list[dict[str, Any]]:
+    @override
+    async def load_messages(self, session_id: str) -> list[dict[str, object]]:
         messages = self._messages.get(session_id, [])
         logger.debug(f"Loaded {len(messages)} messages from memory: {session_id}")
         return messages
 
+    @override
     async def delete_messages(self, session_id: str) -> None:
         if session_id in self._messages:
             del self._messages[session_id]
             logger.debug(f"Deleted all messages from memory: {session_id}")
 
+    @override
     async def save_artifact(
         self,
         session_id: str,
         kind: str,
         content: str,
-        metadata: dict[str, Any] | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> ArtifactMetadata:
         session_dir = self._artifact_root / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -106,7 +113,7 @@ class MemoryStorage(StorageProvider):
         content_path = session_dir / f"{artifact_id}.txt"
         meta_path = session_dir / f"{artifact_id}.json"
 
-        await asyncio.to_thread(content_path.write_text, content, "utf-8")
+        _ = await asyncio.to_thread(content_path.write_text, content, "utf-8")
         artifact_ref = f"artifact://{session_id}/{artifact_id}"
         artifact_meta = ArtifactMetadata(
             artifact_ref=artifact_ref,
@@ -120,9 +127,10 @@ class MemoryStorage(StorageProvider):
         )
 
         meta_json = json.dumps(artifact_meta.model_dump(), ensure_ascii=False, indent=2)
-        await asyncio.to_thread(meta_path.write_text, meta_json, "utf-8")
+        _ = await asyncio.to_thread(meta_path.write_text, meta_json, "utf-8")
         return artifact_meta
 
+    @override
     async def read_artifact(
         self,
         artifact_ref: str,
@@ -157,6 +165,7 @@ class MemoryStorage(StorageProvider):
             size=len(text),
         )
 
+    @override
     async def delete_artifacts(self, session_id: str) -> None:
         session_dir = self._artifact_root / session_id
         if session_dir.exists():

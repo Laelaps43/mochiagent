@@ -3,7 +3,6 @@ Storage Provider - 存储抽象接口
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -18,7 +17,7 @@ class ArtifactMetadata(BaseModel):
     size: int = 0
     path: str = ""
     created_at_ms: int = 0
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class ArtifactReadResult(BaseModel):
@@ -113,7 +112,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def save_message(self, session_id: str, message_data: dict[str, Any]) -> None:
+    async def save_message(self, session_id: str, message_data: dict[str, object]) -> None:
         """
         保存单条消息（增量保存）
 
@@ -124,7 +123,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def load_messages(self, session_id: str) -> list[dict[str, Any]]:
+    async def load_messages(self, session_id: str) -> list[dict[str, object]]:
         """
         加载会话的所有消息
 
@@ -146,12 +145,13 @@ class StorageProvider(ABC):
         """
         pass
 
+    @abstractmethod
     async def save_artifact(
         self,
         session_id: str,
         kind: str,
         content: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, object] | None = None,
     ) -> ArtifactMetadata:
         """
         保存工具执行产生的大文本产物（artifact）。
@@ -160,6 +160,7 @@ class StorageProvider(ABC):
         """
         raise NotImplementedError("save_artifact is not implemented")
 
+    @abstractmethod
     async def read_artifact(
         self,
         artifact_ref: str,
@@ -173,6 +174,7 @@ class StorageProvider(ABC):
         """
         raise NotImplementedError("read_artifact is not implemented")
 
+    @abstractmethod
     async def delete_artifacts(self, session_id: str) -> None:
         """
         删除会话相关的所有 artifact。

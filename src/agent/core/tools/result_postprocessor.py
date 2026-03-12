@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import ClassVar, override
 
 from pydantic import BaseModel, ConfigDict
 
@@ -19,7 +20,7 @@ from agent.types import ToolResult
 
 
 class ToolResultPostProcessConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     summary_max_chars: int = 4000
     preview_head_chars: int = 1500
@@ -33,7 +34,7 @@ class ToolResultPostProcessorStrategy(ABC):
         *,
         session_id: str,
         tool_result: ToolResult,
-        tool_arguments: Mapping[str, Any],
+        tool_arguments: Mapping[str, object],
         storage: StorageProvider,
     ) -> ToolResult:
         raise NotImplementedError
@@ -41,14 +42,15 @@ class ToolResultPostProcessorStrategy(ABC):
 
 class ToolResultPostProcessor(ToolResultPostProcessorStrategy):
     def __init__(self, config: ToolResultPostProcessConfig | None = None):
-        self.config = config or ToolResultPostProcessConfig()
+        self.config: ToolResultPostProcessConfig = config or ToolResultPostProcessConfig()
 
+    @override
     async def process(
         self,
         *,
         session_id: str,
         tool_result: ToolResult,
-        tool_arguments: Mapping[str, Any],
+        tool_arguments: Mapping[str, object],
         storage: StorageProvider,
     ) -> ToolResult:
         result = tool_result.model_copy(deep=True)
@@ -93,8 +95,7 @@ class ToolResultPostProcessor(ToolResultPostProcessorStrategy):
         summary = (
             f"Tool `{result.tool_name}` produced large output ({raw_size} chars), truncated for context.\n"
             + (
-                f"Artifact: {artifact_ref}\nPath: {artifact_path}\n"
-                "Use `read_file` with `path`, `offset`, `limit` for chunked reading.\n\n"
+                f"Artifact: {artifact_ref}\nPath: {artifact_path}\nUse `read_file` with `path`, `offset`, `limit` for chunked reading.\n\n"
                 if artifact_ref and artifact_path
                 else "Storage has no artifact support, only preview is available.\n\n"
             )
@@ -110,7 +111,7 @@ class ToolResultPostProcessor(ToolResultPostProcessorStrategy):
         return result
 
     @staticmethod
-    def _serialize_result(value: Any) -> str:
+    def _serialize_result(value: object) -> str:
         if isinstance(value, str):
             return value
         try:

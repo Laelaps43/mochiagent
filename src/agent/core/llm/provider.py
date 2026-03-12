@@ -3,8 +3,6 @@ Provider Registry - LLM提供商注册表
 管理和创建LLM提供商实例
 """
 
-from typing import Dict, Type
-
 from loguru import logger
 
 from agent.types import LLMConfig
@@ -16,7 +14,7 @@ class AdapterRegistry:
     """LLM适配器注册表"""
 
     def __init__(self):
-        self._providers: Dict[str, Type[LLMProvider]] = {}
+        self._providers: dict[str, type[LLMProvider]] = {}
         self._register_defaults()
 
     def _register_defaults(self) -> None:
@@ -24,7 +22,7 @@ class AdapterRegistry:
         self.register("openai_compatible", OpenAIAdapter)
         logger.info("Registered default LLM adapters (openai_compatible)")
 
-    def register(self, name: str, provider_class: Type[LLMProvider]) -> None:
+    def register(self, name: str, provider_class: type[LLMProvider]) -> None:
         """
         注册LLM适配器
 

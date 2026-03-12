@@ -23,16 +23,16 @@ class LLMProviderError(RuntimeError):
         base_url: str | None = None,
     ) -> None:
         super().__init__(message)
-        self.code = code
-        self.message = message
-        self.hint = hint
-        self.retriable = retriable
-        self.status_code = status_code
-        self.provider_code = provider_code
-        self.x_log_id = x_log_id
-        self.provider = provider
-        self.model = model
-        self.base_url = base_url
+        self.code: str = code
+        self.message: str = message
+        self.hint: str | None = hint
+        self.retriable: bool = retriable
+        self.status_code: int | None = status_code
+        self.provider_code: str | None = provider_code
+        self.x_log_id: str | None = x_log_id
+        self.provider: str | None = provider
+        self.model: str | None = model
+        self.base_url: str | None = base_url
 
 
 class LLMRateLimitError(LLMProviderError):

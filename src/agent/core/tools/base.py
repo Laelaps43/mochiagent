@@ -3,7 +3,7 @@ Tool Base - 工具基类
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import cast
 
 
 from agent.types import ToolDefinition
@@ -29,7 +29,7 @@ class Tool(ABC):
 
     @property
     @abstractmethod
-    def parameters_schema(self) -> Dict[str, Any]:
+    def parameters_schema(self) -> dict[str, object]:
         """
         参数JSON Schema
 
@@ -48,7 +48,7 @@ class Tool(ABC):
         pass
 
     @abstractmethod
-    async def execute(self, **kwargs: Any) -> Any:
+    async def execute(self, **kwargs: object) -> object:
         """
         执行工具
 
@@ -72,5 +72,5 @@ class Tool(ABC):
             name=self.name,
             description=self.description,
             parameters=schema,
-            required=schema.get("required", []),
+            required=cast(list[str], schema.get("required", [])),
         )
