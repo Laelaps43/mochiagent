@@ -65,6 +65,7 @@ class AgentEventLoop:
         )
 
         self.bus.subscribe(EventType.MESSAGE_RECEIVED, self._handle_user_message)
+        self.bus.subscribe(EventType.SESSION_TERMINATED, self._handle_session_terminated)
         logger.info(
             "AgentEventLoop initialized (max_iterations={})",
             self.max_iterations,
@@ -74,6 +75,9 @@ class AgentEventLoop:
         if event.session_id:
             await self.session_manager.emit_to_session_listeners(event.session_id, event)
 
+    async def _handle_session_terminated(self, event: Event) -> None:
+        await self.remove_session_lock(event.session_id)
+
     async def _get_session_lock(self, session_id: str) -> asyncio.Lock:
         async with self._session_locks_guard:
             lock = self._session_locks.get(session_id)
@@ -81,6 +85,10 @@ class AgentEventLoop:
                 lock = asyncio.Lock()
                 self._session_locks[session_id] = lock
             return lock
+
+    async def remove_session_lock(self, session_id: str) -> None:
+        async with self._session_locks_guard:
+            _ = self._session_locks.pop(session_id, None)
 
     async def _emit_error_and_done(
         self,
