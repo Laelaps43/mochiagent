@@ -43,21 +43,25 @@ class MessageBus:
 
     async def _process_events(self) -> None:
         logger.info("Event processing loop started")
+        queue_timeout = MessageBusConfig().queue_timeout
         pending: set[asyncio.Task[None]] = set()
         while self._running or not self._queue.empty():
             try:
                 try:
-                    event = await asyncio.wait_for(
-                        self._queue.get(), timeout=MessageBusConfig().queue_timeout
-                    )
+                    event = await asyncio.wait_for(self._queue.get(), timeout=queue_timeout)
                 except asyncio.TimeoutError:
                     if not self._running:
                         break
                     continue
                 _ = await self._semaphore.acquire()
                 task = asyncio.create_task(self._handle_event(event))
+
+                def _on_done(_task: asyncio.Task[None]) -> None:
+                    pending.discard(_task)
+                    self._queue.task_done()
+
                 pending.add(task)
-                task.add_done_callback(pending.discard)
+                task.add_done_callback(_on_done)
             except Exception as e:
                 logger.error(f"Error in event processing loop: {e}", exc_info=True)
         # 等待所有已派发的 handler 完成

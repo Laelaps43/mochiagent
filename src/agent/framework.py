@@ -111,7 +111,10 @@ class AgentFramework:
             pid: cfg for pid, cfg in self._llm_profiles.items() if pid in normalized_allowed
         }
 
-        assert self.session_manager is not None
+        if self.session_manager is None:
+            raise RuntimeError(
+                "Framework not initialized: session_manager is None. Call initialize() first."
+            )
         ctx = AgentContext(
             session_manager=self.session_manager,
             message_bus=self.bus,
@@ -205,13 +208,14 @@ class AgentFramework:
         if not self._started:
             return
 
+        await self.bus.stop()
+
         for agent in list(self._agents.values()):
             try:
                 await agent.cleanup()
             except Exception as exc:
                 logger.warning("Agent '{}' cleanup failed: {}", agent.name, exc)
 
-        await self.bus.stop()
         self._started = False
         logger.info("Framework stopped")
 

@@ -65,15 +65,15 @@ class MCPToolWrapper(Tool):
     @override
     async def execute(self, **kwargs: object) -> str:
         if not self._manager.can_execute(self._server_name):
-            return f"MCP server '{self._server_name}' is cooling down after failures"
+            raise RuntimeError(f"MCP server '{self._server_name}' is cooling down after failures")
 
         session = self._manager.get_session(self._server_name)
         if session is None:
             if not await self._manager.reconnect_server(self._server_name):
-                return f"MCP server '{self._server_name}' is not connected"
+                raise RuntimeError(f"MCP server '{self._server_name}' is not connected")
             session = self._manager.get_session(self._server_name)
             if session is None:
-                return f"MCP server '{self._server_name}' reconnection failed"
+                raise RuntimeError(f"MCP server '{self._server_name}' reconnection failed")
 
         try:
             result = await asyncio.wait_for(
@@ -83,10 +83,10 @@ class MCPToolWrapper(Tool):
             self._manager.record_tool_success(self._server_name)
         except asyncio.TimeoutError:
             self._manager.record_tool_failure(self._server_name, "timeout")
-            return f"MCP tool timeout after {self._timeout}s"
+            raise RuntimeError(f"MCP tool timeout after {self._timeout}s")
         except Exception as exc:
             self._manager.record_tool_failure(self._server_name, str(exc))
-            return f"MCP tool call failed: {exc}"
+            raise RuntimeError(f"MCP tool call failed: {exc}") from exc
 
         parts: list[str] = []
         content_blocks = result.content if hasattr(result, "content") else []

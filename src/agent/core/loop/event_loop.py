@@ -7,6 +7,7 @@ Agent Event Loop - Agent事件循环
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import cast
 
@@ -54,6 +55,8 @@ class AgentEventLoop:
         self.adapter_registry: AdapterRegistry = adapter_registry
         self.framework: FrameworkProtocol = framework
         self.max_iterations: int = max(1, max_iterations)
+        self._session_locks: dict[str, asyncio.Lock] = {}
+        self._session_locks_guard: asyncio.Lock = asyncio.Lock()
         self._llm_turn_handler: LLMTurnHandler = LLMTurnHandler(
             session_manager=session_manager,
             adapter_registry=adapter_registry,
@@ -70,6 +73,14 @@ class AgentEventLoop:
     async def _emit_event(self, event: Event) -> None:
         if event.session_id:
             await self.session_manager.emit_to_session_listeners(event.session_id, event)
+
+    async def _get_session_lock(self, session_id: str) -> asyncio.Lock:
+        async with self._session_locks_guard:
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._session_locks[session_id] = lock
+            return lock
 
     async def _emit_error_and_done(
         self,
@@ -118,38 +129,40 @@ class AgentEventLoop:
     async def _handle_user_message(self, event: Event) -> None:
         session_id = event.session_id
         logger.info("Handling user message for session {}", session_id)
+        lock = await self._get_session_lock(session_id)
 
-        try:
-            context = await self.session_manager.get_session(session_id)
-            if not context.messages or context.messages[-1].role != "user":
-                raise ValueError(
-                    f"No user message found in context for session {session_id}. Please call context.build_user_message() first."
+        async with lock:
+            try:
+                context = await self.session_manager.get_session(session_id)
+                if not context.messages or context.messages[-1].role != "user":
+                    raise ValueError(
+                        f"No user message found in context for session {session_id}. Please call context.build_user_message() first."
+                    )
+
+                await self._conversation_loop(session_id)
+
+            except ValueError as exc:
+                error_message = f"{type(exc).__name__}: {exc}"
+                logger.error("Error handling user message (invalid state): {}", error_message)
+                await self._emit_error_and_done(
+                    session_id=session_id,
+                    error_message=error_message,
+                    code="INVALID_STATE",
                 )
 
-            await self._conversation_loop(session_id)
-
-        except ValueError as exc:
-            error_message = f"{type(exc).__name__}: {exc}"
-            logger.error("Error handling user message (invalid state): {}", error_message)
-            await self._emit_error_and_done(
-                session_id=session_id,
-                error_message=error_message,
-                code="INVALID_STATE",
-            )
-
-        except Exception as exc:
-            error_message, code, hint = LLMTurnHandler.resolve_error_payload(exc)
-            logger.exception(
-                "Error handling user message for session {}: {}",
-                session_id,
-                error_message,
-            )
-            await self._emit_error_and_done(
-                session_id=session_id,
-                error_message=error_message,
-                code=code,
-                hint=hint,
-            )
+            except Exception as exc:
+                error_message, code, hint = LLMTurnHandler.resolve_error_payload(exc)
+                logger.exception(
+                    "Error handling user message for session {}: {}",
+                    session_id,
+                    error_message,
+                )
+                await self._emit_error_and_done(
+                    session_id=session_id,
+                    error_message=error_message,
+                    code=code,
+                    hint=hint,
+                )
 
     async def _conversation_loop(self, session_id: str) -> None:
         context = await self.session_manager.get_session(session_id)
@@ -209,6 +222,16 @@ class AgentEventLoop:
                 session_id,
                 self.max_iterations,
             )
+            # 关闭未完成的 assistant message，避免存储中出现残缺消息
+            last_message_id = (
+                context.current_message.message_id if context.current_message else None
+            )
+            if context.current_message:
+                await self.session_manager.finish_assistant_message(
+                    session_id=session_id,
+                    tokens=TokenUsage(),
+                    finish="max_iterations_exceeded",
+                )
             await self._emit_event(
                 Event(
                     type=EventType.LLM_ERROR,
@@ -229,9 +252,7 @@ class AgentEventLoop:
                     type=EventType.MESSAGE_DONE,
                     session_id=session_id,
                     data={
-                        "message_id": (
-                            context.current_message.message_id if context.current_message else None
-                        ),
+                        "message_id": last_message_id,
                         "tokens": TokenUsage(),
                         "context_budget": context.context_budget,
                         "finish": "max_iterations_exceeded",
