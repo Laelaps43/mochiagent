@@ -36,6 +36,8 @@ class MemoryStorage(StorageProvider):
     - _messages: 会话消息列表
     """
 
+    _SESSION_COUNT_WARNING_THRESHOLD: int = 500
+
     def __init__(self, artifact_root: str | Path | None = None):
         self._sessions: dict[str, SessionMetadataData] = {}
         self._messages: dict[str, list[Message]] = {}
@@ -51,23 +53,29 @@ class MemoryStorage(StorageProvider):
     @override
     async def save_session(self, session_id: str, session_data: SessionMetadataData) -> None:
         self._sessions[session_id] = session_data
-        logger.debug(f"Saved session metadata to memory: {session_id}")
+        count = len(self._sessions)
+        if count == self._SESSION_COUNT_WARNING_THRESHOLD:
+            logger.warning(
+                "MemoryStorage holds {} sessions — consider switching to a persistent StorageProvider",
+                count,
+            )
+        logger.debug("Saved session metadata to memory: {}", session_id)
 
     @override
     async def load_session(self, session_id: str) -> SessionMetadataData | None:
         data = self._sessions.get(session_id)
         if data:
-            logger.debug(f"Loaded session metadata from memory: {session_id}")
+            logger.debug("Loaded session metadata from memory: {}", session_id)
         return data
 
     @override
     async def delete_session(self, session_id: str) -> None:
         if session_id in self._sessions:
             del self._sessions[session_id]
-            logger.debug(f"Deleted session from memory: {session_id}")
+            logger.debug("Deleted session from memory: {}", session_id)
         if session_id in self._messages:
             del self._messages[session_id]
-            logger.debug(f"Deleted messages from memory: {session_id}")
+            logger.debug("Deleted messages from memory: {}", session_id)
         await self.delete_artifacts(session_id)
 
     @override
@@ -84,7 +92,9 @@ class MemoryStorage(StorageProvider):
             self._messages[session_id] = []
         self._messages[session_id].append(message)
         logger.debug(
-            f"Saved message to memory: {session_id}, total messages: {len(self._messages[session_id])}"
+            "Saved message to memory: {}, total messages: {}",
+            session_id,
+            len(self._messages[session_id]),
         )
 
     @override
@@ -97,14 +107,14 @@ class MemoryStorage(StorageProvider):
                 if msg.message_id == from_message_id:
                     messages = messages[idx:]
                     break
-        logger.debug(f"Loaded {len(messages)} messages from memory: {session_id}")
+        logger.debug("Loaded {} messages from memory: {}", len(messages), session_id)
         return list(messages)
 
     @override
     async def delete_messages(self, session_id: str) -> None:
         if session_id in self._messages:
             del self._messages[session_id]
-            logger.debug(f"Deleted all messages from memory: {session_id}")
+            logger.debug("Deleted all messages from memory: {}", session_id)
 
     @override
     async def save_artifact(

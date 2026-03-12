@@ -188,9 +188,8 @@ class DefaultContextCompactor(ContextCompactor):
                     )
 
                 retries += 1
-                await asyncio.sleep(
-                    (options.summary_retry_sleep_ms / 1000.0) * (2.0 ** (retries - 1))
-                )
+                delay_s = (options.summary_retry_sleep_ms / 1000.0) * (2.0 ** (retries - 1))
+                await asyncio.sleep(min(delay_s, 30.0))
 
     def _estimate_tokens_from_messages(
         self,
