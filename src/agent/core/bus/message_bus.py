@@ -22,24 +22,24 @@ class MessageBus:
         self._process_task: asyncio.Task[None] | None = None
         self._max_concurrent: int = max_concurrent
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrent)
-        logger.info(f"MessageBus initialized with max_concurrent={max_concurrent}")
+        logger.info("MessageBus initialized with max_concurrent={}", max_concurrent)
 
     def subscribe(
         self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
     ) -> None:
         self._subscribers[event_type].append(handler)
-        logger.debug(f"Subscribed to {event_type.value}: {handler.__name__}")
+        logger.debug("Subscribed to {}: {}", event_type.value, handler.__name__)
 
     def unsubscribe(
         self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
     ) -> None:
         if event_type in self._subscribers:
             self._subscribers[event_type].remove(handler)
-            logger.debug(f"Unsubscribed from {event_type.value}: {handler.__name__}")
+            logger.debug("Unsubscribed from {}: {}", event_type.value, handler.__name__)
 
     async def publish(self, event: Event) -> None:
         await self._queue.put(event)
-        logger.debug(f"Published event: {event.type.value} for session {event.session_id}")
+        logger.debug("Published event: {} for session {}", event.type.value, event.session_id)
 
     async def _process_events(self) -> None:
         logger.info("Event processing loop started")
@@ -63,7 +63,7 @@ class MessageBus:
                 pending.add(task)
                 task.add_done_callback(_on_done)
             except Exception as e:
-                logger.error(f"Error in event processing loop: {e}", exc_info=True)
+                logger.error("Error in event processing loop: {}", e, exc_info=True)
         # 等待所有已派发的 handler 完成
         if pending:
             _ = await asyncio.gather(*pending, return_exceptions=True)

@@ -151,7 +151,9 @@ class SessionContext:
         old_agent = self.agent_name
         self.agent_name = new_agent_name
         self.updated_at = datetime.now(tz=timezone.utc)
-        logger.info(f"Session {self.session_id} switched agent: {old_agent} -> {new_agent_name}")
+        logger.info(
+            "Session {} switched agent: {} -> {}", self.session_id, old_agent, new_agent_name
+        )
 
     def update_model_profile(self, model_profile_id: str | None) -> None:
         """更新会话绑定的模型 profile。"""

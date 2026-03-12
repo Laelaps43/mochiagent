@@ -132,7 +132,7 @@ class LLMTurnHandler:
                 if system_prompt
                 else visible_messages
             )
-            logger.debug(f"Calling LLM for session {session_id}: messages={len(llm_messages)}")
+            logger.debug("Calling LLM for session {}: messages={}", session_id, len(llm_messages))
 
             try:
                 async for chunk in llm.stream_chat(

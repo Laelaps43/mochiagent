@@ -20,12 +20,12 @@ class ToolRegistry:
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
-        logger.info(f"Registered tool: {tool.name}")
+        logger.info("Registered tool: {}", tool.name)
 
     def unregister(self, tool_name: str) -> None:
         if tool_name in self._tools:
             del self._tools[tool_name]
-            logger.info(f"Unregistered tool: {tool_name}")
+            logger.info("Unregistered tool: {}", tool_name)
 
     def get(self, tool_name: str) -> Tool:
         if tool_name not in self._tools:

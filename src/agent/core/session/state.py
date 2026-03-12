@@ -126,21 +126,23 @@ class SessionStateMachine:
         # transitions library types after_state_change as list[str] but accepts async callables at runtime
         cast(list[object], self.machine.after_state_change).append(self._after_state_change)
 
-        logger.info(f"StateMachine created for session {session_id}, initial state: {self.state}")
+        logger.info(
+            "StateMachine created for session {}, initial state: {}", session_id, self.state
+        )
 
     async def _after_state_change(self, event_data: _EventData) -> None:
         """状态转换后的回调"""
         from_state = str(event_data.transition.source)
         to_state = str(event_data.transition.dest)
 
-        logger.info(f"Session {self.session_id} state changed: {from_state} -> {to_state}")
+        logger.info("Session {} state changed: {} -> {}", self.session_id, from_state, to_state)
 
         # 调用外部回调
         if self._on_state_change:
             try:
                 await self._on_state_change(self.session_id, from_state, to_state)
             except Exception as e:
-                logger.error(f"Error in state change callback: {e}", exc_info=True)
+                logger.error("Error in state change callback: {}", e, exc_info=True)
 
     @property
     def current_state(self) -> SessionState:
@@ -203,5 +205,5 @@ class SessionStateMachine:
             await getattr(self, trigger)()
             return True
         except Exception as e:
-            logger.error(f"Failed to transition: {e}", exc_info=True)
+            logger.error("Failed to transition: {}", e, exc_info=True)
             return False

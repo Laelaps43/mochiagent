@@ -31,7 +31,7 @@ class AdapterRegistry:
             provider_class: 适配器类
         """
         self._providers[name] = provider_class
-        logger.debug(f"Registered LLM provider: {name}")
+        logger.debug("Registered LLM provider: {}", name)
 
     def get(self, config: LLMConfig) -> LLMProvider:
         """

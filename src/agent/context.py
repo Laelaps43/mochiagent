@@ -76,8 +76,8 @@ class AgentContext:
             )
         )
 
-        logger.debug(f"Message sent to session {session_id}")
+        logger.debug("Message sent to session {}", session_id)
 
     async def switch_session_agent(self, session_id: str, new_agent_name: str) -> None:
         await self.session_manager.switch_session_agent(session_id, new_agent_name)
-        logger.info(f"Session {session_id} switched to agent {new_agent_name}")
+        logger.info("Session {} switched to agent {}", session_id, new_agent_name)

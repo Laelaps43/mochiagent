@@ -24,12 +24,12 @@ class Session:
     def add_listener(self, listener: "Callable[[Event], Awaitable[None]]") -> None:
         """添加监听器"""
         self._session_manager.add_session_listener(self.session_id, listener)
-        logger.debug(f"Added listener to session {self.session_id}")
+        logger.debug("Added listener to session {}", self.session_id)
 
     def remove_listener(self, listener: "Callable[[Event], Awaitable[None]]") -> None:
         """移除监听器"""
         self._session_manager.remove_session_listener(self.session_id, listener)
-        logger.debug(f"Removed listener from session {self.session_id}")
+        logger.debug("Removed listener from session {}", self.session_id)
 
     @property
     def state(self) -> SessionState:
