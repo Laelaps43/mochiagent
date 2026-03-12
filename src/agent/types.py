@@ -52,6 +52,7 @@ class ToolResult(BaseModel):
     tool_call_id: str
     tool_name: str
     result: object
+    """Tool execution output. Typically a dict, str, or list returned by Tool.execute()."""
     error: str | None = None
     success: bool = True
     summary: str | None = None
