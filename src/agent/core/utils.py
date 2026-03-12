@@ -52,10 +52,12 @@ def to_int(value: object, *, default: int = 0, minimum: int = 0) -> int:
 
 # ---- id / time helpers ----
 
+_UUID_PREFIX_LENGTH: int = SystemConfig().uuid_prefix_length
+
 
 def gen_id(prefix: str = "") -> str:
     """生成带可选前缀的短 UUID 标识符。"""
-    return f"{prefix}{uuid4().hex[:SystemConfig().uuid_prefix_length]}"
+    return f"{prefix}{uuid4().hex[:_UUID_PREFIX_LENGTH]}"
 
 
 def now_ms() -> int:
