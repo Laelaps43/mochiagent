@@ -15,6 +15,15 @@ def set_workspace_root(root: Path) -> None:
     _workspace_root = root.resolve(strict=False)
 
 
+def get_workspace_root() -> Path | None:
+    return _workspace_root
+
+
+def reset_workspace_root() -> None:
+    global _workspace_root  # noqa: PLW0603
+    _workspace_root = None
+
+
 def validate_path_within_workspace(raw_path: str) -> str | None:
     """Return an error message if *raw_path* escapes the workspace root, else ``None``."""
     if _workspace_root is None:
