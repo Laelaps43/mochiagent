@@ -168,14 +168,17 @@ class DefaultContextCompactor(ContextCompactor):
                     retries=retries,
                 )
             except Exception as exc:
-                if (
-                    self._is_context_overflow_error(exc)
-                    and len(base_messages) > 1
-                    and trimmed < options.summary_max_trims
-                ):
-                    _ = base_messages.pop(0)
-                    trimmed += 1
-                    continue
+                if self._is_context_overflow_error(exc):
+                    if len(base_messages) > 1 and trimmed < options.summary_max_trims:
+                        _ = base_messages.pop(0)
+                        trimmed += 1
+                        continue
+                    # 已无法继续裁剪，直接放弃重试
+                    return SummaryBuildResult.failure(
+                        error=f"context_overflow_untrimable: {type(exc).__name__}: {exc}",
+                        trimmed_count=trimmed,
+                        retries=retries,
+                    )
 
                 if retries >= options.summary_max_retries:
                     return SummaryBuildResult.failure(
