@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import override
 
 from agent.core.tools import Tool
+from agent.common.tools._utils import validate_path_within_workspace
 
 
 class WriteFileTool(Tool):
@@ -45,6 +46,10 @@ class WriteFileTool(Tool):
         encoding: str = "utf-8",
         **kwargs: object,
     ) -> object:
+        path_error = validate_path_within_workspace(path)
+        if path_error:
+            return {"success": False, "error": f"WORKSPACE_VIOLATION: {path_error}"}
+
         file_path = Path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         mode = "a" if append else "w"

@@ -7,12 +7,14 @@ import json
 from pathlib import Path
 from typing import cast
 
+from jsonschema import ValidationError, validate as jsonschema_validate
 from loguru import logger
 
 from .policy import ToolPolicyConfig, ToolPolicyEngine
 from .base import Tool
 from .registry import ToolRegistry
 from .security_guard import ToolSecurityConfig, ToolSecurityGuard
+from agent.common.tools._utils import set_workspace_root
 from agent.config.tools import ToolRuntimeConfig
 from agent.types import ToolCallPayload, ToolResult
 
@@ -55,9 +57,15 @@ class ToolExecutor:
             restrict=restrict_to_workspace,
             config=security or ToolSecurityConfig(),
         )
-        concurrency = max_batch_concurrency if max_batch_concurrency is not None else ToolRuntimeConfig().max_batch_concurrency
+        if restrict_to_workspace:
+            set_workspace_root(Path(workspace_root) if workspace_root else Path.cwd())
+        concurrency = (
+            max_batch_concurrency
+            if max_batch_concurrency is not None
+            else ToolRuntimeConfig().max_batch_concurrency
+        )
         self._batch_semaphore: asyncio.Semaphore = asyncio.Semaphore(concurrency)
-        logger.info(f"ToolExecutor initialized (timeout={default_timeout}s)")
+        logger.info("ToolExecutor initialized (timeout={}s)", default_timeout)
 
     async def execute(self, tool_call: ToolCallPayload) -> ToolResult:
         """
@@ -73,14 +81,14 @@ class ToolExecutor:
         tool_name = tool_call.function.name
         arguments_str = tool_call.function.arguments or "{}"
 
-        logger.info(f"Executing tool: {tool_name} (call_id={tool_call_id})")
+        logger.info("Executing tool: {} (call_id={})", tool_name, tool_call_id)
 
         try:
             # 解析参数
             try:
                 arguments = cast(dict[str, object], json.loads(arguments_str))
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse tool arguments: {e}")
+                logger.error("Failed to parse tool arguments: {}", e)
                 return ToolResult(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
@@ -91,7 +99,7 @@ class ToolExecutor:
 
             # 获取工具
             if not self.registry.has(tool_name):
-                logger.error(f"Tool '{tool_name}' not found")
+                logger.error("Tool '{}' not found", tool_name)
                 return ToolResult(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
@@ -120,7 +128,7 @@ class ToolExecutor:
             try:
                 self._validate_arguments(tool, arguments)
             except ValueError as e:
-                logger.error(f"Tool '{tool_name}' parameter validation failed: {e}")
+                logger.error("Tool '{}' parameter validation failed: {}", tool_name, e)
                 return ToolResult(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
@@ -149,7 +157,9 @@ class ToolExecutor:
                     tool.execute(**arguments), timeout=self.default_timeout
                 )
             except asyncio.TimeoutError:
-                logger.error(f"Tool '{tool_name}' execution timeout after {self.default_timeout}s")
+                logger.error(
+                    "Tool '{}' execution timeout after {}s", tool_name, self.default_timeout
+                )
                 return ToolResult(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
@@ -158,7 +168,7 @@ class ToolExecutor:
                     success=False,
                 )
 
-            logger.info(f"Tool {tool_name} executed successfully")
+            logger.info("Tool {} executed successfully", tool_name)
 
             return ToolResult(
                 tool_call_id=tool_call_id,
@@ -168,7 +178,7 @@ class ToolExecutor:
             )
 
         except Exception as e:
-            logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
+            logger.error("Error executing tool {}: {}", tool_name, e, exc_info=True)
             return ToolResult(
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
@@ -190,7 +200,7 @@ class ToolExecutor:
         if not tool_calls:
             return []
 
-        logger.info(f"Executing {len(tool_calls)} tool calls in parallel")
+        logger.info("Executing {} tool calls in parallel", len(tool_calls))
 
         async def _limited_execute(tc: ToolCallPayload) -> ToolResult:
             async with self._batch_semaphore:
@@ -208,7 +218,10 @@ class ToolExecutor:
                 tool_name = tool_call.function.name
 
                 logger.error(
-                    f"Tool {tool_name} (call_id={tool_call_id}) failed with exception: {raw_result}",
+                    "Tool {} (call_id={}) failed with exception: {}",
+                    tool_name,
+                    tool_call_id,
+                    raw_result,
                     exc_info=raw_result,
                 )
 
@@ -225,7 +238,7 @@ class ToolExecutor:
                 results.append(cast(ToolResult, raw_result))
 
         success_count = sum(1 for r in results if r.success)
-        logger.info(f"Batch execution completed: {success_count}/{len(tool_calls)} succeeded")
+        logger.info("Batch execution completed: {}/{} succeeded", success_count, len(tool_calls))
 
         return results
 
@@ -240,15 +253,8 @@ class ToolExecutor:
         Raises:
             ValueError: 参数验证失败
         """
-        try:
-            from jsonschema import validate, ValidationError
-        except ImportError:
-            # jsonschema 未安装,跳过验证
-            logger.warning("jsonschema not installed, skipping parameter validation")
-            return
-
         schema: dict[str, object] = tool.parameters_schema
         try:
-            validate(instance=arguments, schema=schema)
+            jsonschema_validate(instance=arguments, schema=schema)
         except ValidationError as e:
             raise ValueError(f"Invalid parameters: {e.message}")

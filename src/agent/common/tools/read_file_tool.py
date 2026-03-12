@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import override
 
 from agent.core.tools import Tool
+from agent.common.tools._utils import validate_path_within_workspace
 
 
 class ReadFileTool(Tool):
@@ -57,6 +58,10 @@ class ReadFileTool(Tool):
         limit: int | None = None,
         **kwargs: object,
     ) -> object:
+        path_error = validate_path_within_workspace(path)
+        if path_error:
+            return {"success": False, "error": f"WORKSPACE_VIOLATION: {path_error}"}
+
         file_path = Path(path)
         if not file_path.exists():
             return {"success": False, "error": f"File not found: {path}"}
