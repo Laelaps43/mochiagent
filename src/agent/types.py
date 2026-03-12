@@ -8,11 +8,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 import time
-from typing import Literal, cast
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent.core._numeric import to_non_negative_int
+from agent.core.utils import to_non_negative_int
 
 
 class MessageRole(str, Enum):
@@ -22,6 +22,7 @@ class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
     TOOL = "tool"
+    COMPACTION = "compaction"
 
 
 class ToolFunctionPayload(BaseModel):
@@ -75,46 +76,6 @@ class ContextBudget(BaseModel):
     source: ContextBudgetSource = "estimated"
     updated_at_ms: int = Field(default_factory=lambda: int(time.time() * 1000))
 
-    @classmethod
-    def from_dict(cls, data: dict[str, object] | "ContextBudget | None") -> "ContextBudget":
-        if data is None:
-            return cls.zero()
-        if isinstance(data, ContextBudget):
-            return data
-        total = (
-            to_non_negative_int(data.get("total_tokens"))
-            if data.get("total_tokens") is not None
-            else None
-        )
-        input_t = to_non_negative_int(data.get("input_tokens"))
-        output_t = to_non_negative_int(data.get("output_tokens"))
-        reasoning_t = to_non_negative_int(data.get("reasoning_tokens"))
-        used = input_t + output_t + reasoning_t
-        if total is None:
-            remaining = (
-                to_non_negative_int(data.get("remaining_tokens"))
-                if data.get("remaining_tokens") is not None
-                else None
-            )
-        else:
-            remaining = max(total - used, 0)
-        return cls(
-            total_tokens=total,
-            used_tokens=used,
-            remaining_tokens=remaining,
-            input_tokens=input_t,
-            output_tokens=output_t,
-            reasoning_tokens=reasoning_t,
-            source=cast("ContextBudgetSource", data.get("source", "estimated")),
-            updated_at_ms=to_non_negative_int(
-                data.get("updated_at_ms"), default=int(time.time() * 1000)
-            ),
-        )
-
-    @staticmethod
-    def zero() -> "ContextBudget":
-        return ContextBudget()
-
     def update(
         self,
         *,
@@ -124,7 +85,7 @@ class ContextBudget(BaseModel):
         reasoning_tokens: int,
         source: ContextBudgetSource,
         updated_at_ms: int | None = None,
-    ) -> "ContextBudget":
+    ) -> None:
         self.total_tokens = to_non_negative_int(total_tokens) if total_tokens is not None else None
         self.input_tokens = to_non_negative_int(input_tokens)
         self.output_tokens = to_non_negative_int(output_tokens)
@@ -136,7 +97,6 @@ class ContextBudget(BaseModel):
             self.remaining_tokens = max(self.total_tokens - self.used_tokens, 0)
         self.source = "provider" if source == "provider" else "estimated"
         self.updated_at_ms = updated_at_ms if updated_at_ms is not None else int(time.time() * 1000)
-        return self
 
 
 class SessionMetadataData(BaseModel):
@@ -145,6 +105,7 @@ class SessionMetadataData(BaseModel):
     model_profile_id: str
     agent_name: str
     context_budget: ContextBudget
+    last_compaction_message_id: str | None = None
     created_at: str
     updated_at: str
 
@@ -215,6 +176,10 @@ class EventType(str, Enum):
     MESSAGE_RECEIVED = "message.received"
     PART_CREATED = "part.created"
     MESSAGE_DONE = "message.done"
+
+    # 压缩事件
+    CONTEXT_COMPACTING = "context.compacting"
+    CONTEXT_COMPACTED = "context.compacted"
 
     # 错误事件
     LLM_ERROR = "llm.error"

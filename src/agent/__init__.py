@@ -1,7 +1,5 @@
 """异步Agent框架 - 基于事件驱动的多Agent系统"""
 
-from collections.abc import Callable, Mapping
-
 from loguru import logger
 
 from .core.bus import MessageBus
@@ -18,7 +16,12 @@ from .core.tools import (
     ToolResultPostProcessConfig,
     ToolResultPostProcessorStrategy,
 )
-from .core.compression import ContextCompactor, CompactionResult
+from .core.compression import (
+    ContextCompactor,
+    CompactionDecision,
+    SummaryBuildResult,
+    CompactorRunOptions,
+)
 from .core.message import UserInput, UserTextInput
 from .types import (
     Event,
@@ -109,27 +112,18 @@ def list_agents() -> list[str]:
     return framework.list_agents()
 
 
-def register_strategy(kind: StrategyKind, name: str, factory: Callable[..., object]) -> None:
-    """注册某类策略工厂。"""
-    framework = get_framework()
-    framework.strategy_manager.register(kind, name, factory)
-
-
-def list_strategies(kind: StrategyKind) -> list[str]:
-    """列出某类已注册策略名。"""
-    framework = get_framework()
-    return framework.strategy_manager.list(kind)
-
-
 def set_agent_strategy(
     kind: StrategyKind,
     agent_name: str,
-    name: str,
-    options: Mapping[str, object] | None = None,
+    strategy: object,
+    *,
+    compaction_options: CompactorRunOptions | None = None,
 ) -> None:
-    """设置某个 Agent 使用的指定策略。"""
+    """设置某个 Agent 使用的指定策略实例。"""
     framework = get_framework()
-    framework.strategy_manager.set_agent(kind, agent_name, name, options)
+    framework.strategy_manager.set(
+        kind, agent_name, strategy, compaction_options=compaction_options
+    )
 
 
 async def shutdown() -> None:
@@ -146,12 +140,11 @@ __all__ = [
     "shutdown",
     "get_agent",
     "list_agents",
-    "register_strategy",
-    "list_strategies",
     "set_agent_strategy",
     # Framework (for advanced users)
     "AgentFramework",
     "StrategyKind",
+    "CompactorRunOptions",
     "get_framework",
     "reset_framework",
     "BaseAgent",
@@ -182,7 +175,8 @@ __all__ = [
     "ToolResultPostProcessorStrategy",
     # Core - Compression
     "ContextCompactor",
-    "CompactionResult",
+    "CompactionDecision",
+    "SummaryBuildResult",
     # Types
     "Event",
     "EventType",

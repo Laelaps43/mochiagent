@@ -12,7 +12,6 @@ from .part import (
     ToolPart,
     ToolInput,
     ToolState,
-
     ToolStatePending,
     ToolStateRunning,
     ToolStateCompleted,
@@ -27,6 +26,7 @@ from .info import (
     UserMessageInfo,
     AssistantMessageInfo,
     SystemMessageInfo,
+    CompactionMessageInfo,
 )
 from .message import Message
 
@@ -57,5 +57,6 @@ __all__ = [
     "UserMessageInfo",
     "AssistantMessageInfo",
     "SystemMessageInfo",
+    "CompactionMessageInfo",
     "Message",
 ]

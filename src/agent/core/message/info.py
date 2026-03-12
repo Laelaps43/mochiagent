@@ -74,7 +74,15 @@ class SystemMessageInfo(MessageInfoBase):
     created_at: int = 0
 
 
+class CompactionMessageInfo(MessageInfoBase):
+    """压缩书签消息元数据"""
+
+    role: Literal["compaction"] = "compaction"
+    compacted_count: int = 0
+    compaction_metadata: dict[str, object] = Field(default_factory=dict)
+
+
 MessageInfo = Annotated[
-    UserMessageInfo | AssistantMessageInfo | SystemMessageInfo,
+    UserMessageInfo | AssistantMessageInfo | SystemMessageInfo | CompactionMessageInfo,
     Discriminator("role"),
 ]
