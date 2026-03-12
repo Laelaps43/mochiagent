@@ -69,11 +69,11 @@ def demo_override():
     os.environ["MOCHI_UUID_PREFIX_LENGTH"] = "4"
 
     config = ToolRuntimeConfig()
-    print(f"设置 MOCHI_TIMEOUT=999")
+    print("设置 MOCHI_TIMEOUT=999")
     print(f"  → ToolRuntimeConfig.timeout = {config.timeout}s")
 
     sys_config = SystemConfig()
-    print(f"\n设置 MOCHI_UUID_PREFIX_LENGTH=4")
+    print("\n设置 MOCHI_UUID_PREFIX_LENGTH=4")
     print(f"  → SystemConfig.uuid_prefix_length = {sys_config.uuid_prefix_length}")
 
     # 生成更短的 ID
