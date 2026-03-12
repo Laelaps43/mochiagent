@@ -5,11 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
-
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ToolPolicyConfig(BaseModel):
+    """工具策略配置 (不支持环境变量)"""
+
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     allow: set[str] = Field(default_factory=set)
@@ -26,6 +28,8 @@ class ToolPolicyConfig(BaseModel):
 
 
 class WorkspaceConfig(BaseModel):
+    """工作空间配置 (不支持环境变量)"""
+
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     root: Path = Field(default_factory=Path.cwd)
@@ -33,6 +37,8 @@ class WorkspaceConfig(BaseModel):
 
 
 class ToolSecurityConfig(BaseModel):
+    """工具安全配置 (不支持环境变量)"""
+
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     enforce_workspace: bool = True
@@ -42,10 +48,27 @@ class ToolSecurityConfig(BaseModel):
     )
 
 
-class ToolRuntimeConfig(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+class ToolRuntimeConfig(BaseSettings):
+    """工具运行时配置
+
+    环境变量示例:
+        MOCHI_TIMEOUT=60
+        MOCHI_MAX_BATCH_CONCURRENCY=20
+        MOCHI_EXEC_MAX_OUTPUT_CHARS=50000
+        MOCHI_WEB_FETCH_MAX_CHARS=30000
+        MOCHI_WEB_SEARCH_API_KEY=your-key-here
+    """
+
+    model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
+        frozen=True,
+        env_prefix="MOCHI_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     timeout: int = 30
+    max_batch_concurrency: int = 10
     policy: ToolPolicyConfig = Field(default_factory=ToolPolicyConfig)
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     security: ToolSecurityConfig = Field(default_factory=ToolSecurityConfig)

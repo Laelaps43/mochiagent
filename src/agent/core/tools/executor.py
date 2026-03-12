@@ -13,10 +13,8 @@ from .policy import ToolPolicyConfig, ToolPolicyEngine
 from .base import Tool
 from .registry import ToolRegistry
 from .security_guard import ToolSecurityConfig, ToolSecurityGuard
+from agent.config.tools import ToolRuntimeConfig
 from agent.types import ToolCallPayload, ToolResult
-
-
-_DEFAULT_MAX_BATCH_CONCURRENCY = 10
 
 
 class ToolExecutor:
@@ -35,7 +33,7 @@ class ToolExecutor:
         workspace_root: str | Path | None = None,
         restrict_to_workspace: bool = True,
         security: ToolSecurityConfig | None = None,
-        max_batch_concurrency: int = _DEFAULT_MAX_BATCH_CONCURRENCY,
+        max_batch_concurrency: int | None = None,
     ):
         """
         初始化工具执行器
@@ -57,7 +55,8 @@ class ToolExecutor:
             restrict=restrict_to_workspace,
             config=security or ToolSecurityConfig(),
         )
-        self._batch_semaphore: asyncio.Semaphore = asyncio.Semaphore(max_batch_concurrency)
+        concurrency = max_batch_concurrency if max_batch_concurrency is not None else ToolRuntimeConfig().max_batch_concurrency
+        self._batch_semaphore: asyncio.Semaphore = asyncio.Semaphore(concurrency)
         logger.info(f"ToolExecutor initialized (timeout={default_timeout}s)")
 
     async def execute(self, tool_call: ToolCallPayload) -> ToolResult:

@@ -1,5 +1,6 @@
 """Public configuration entrypoint for agent package."""
 
+from .system import MessageBusConfig, SystemConfig
 from .tools import (
     ToolPolicyConfig,
     ToolRuntimeConfig,
@@ -8,6 +9,8 @@ from .tools import (
 )
 
 __all__ = [
+    "MessageBusConfig",
+    "SystemConfig",
     "ToolPolicyConfig",
     "ToolRuntimeConfig",
     "ToolSecurityConfig",

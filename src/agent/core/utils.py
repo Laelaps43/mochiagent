@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from uuid import uuid4
 
-from agent.constants import UUID_PREFIX_LENGTH
+from agent.config.system import SystemConfig
 
 __all__ = [
     "to_non_negative_int",
@@ -55,7 +55,7 @@ def to_int(value: object, *, default: int = 0, minimum: int = 0) -> int:
 
 def gen_id(prefix: str = "") -> str:
     """生成带可选前缀的短 UUID 标识符。"""
-    return f"{prefix}{uuid4().hex[:UUID_PREFIX_LENGTH]}"
+    return f"{prefix}{uuid4().hex[:SystemConfig().uuid_prefix_length]}"
 
 
 def now_ms() -> int:

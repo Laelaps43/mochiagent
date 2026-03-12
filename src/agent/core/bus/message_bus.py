@@ -6,8 +6,8 @@ from collections.abc import Awaitable, Callable
 
 from loguru import logger
 
+from agent.config.system import MessageBusConfig
 from agent.types import Event, EventType
-from agent.constants import MESSAGE_BUS_QUEUE_TIMEOUT
 
 
 class MessageBus:
@@ -48,7 +48,7 @@ class MessageBus:
             try:
                 try:
                     event = await asyncio.wait_for(
-                        self._queue.get(), timeout=MESSAGE_BUS_QUEUE_TIMEOUT
+                        self._queue.get(), timeout=MessageBusConfig().queue_timeout
                     )
                 except asyncio.TimeoutError:
                     if not self._running:

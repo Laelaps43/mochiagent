@@ -209,7 +209,7 @@ class LLMConfig(BaseModel):
     context_window_tokens: int | None = None
     stream: bool = True
     timeout: int = 60
-    openai_max_retries: int | None = None
+    openai_max_retries: int = 2
     max_overflow_retries: int = 3
     extra_params: dict[str, object] = Field(default_factory=dict)
 

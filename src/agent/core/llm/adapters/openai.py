@@ -20,7 +20,6 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
     ChatCompletionMessageFunctionToolCall,
 )
 
-from agent.constants import OPENAI_MAX_RETRIES
 from agent.core.llm.base import LLMProvider
 from agent.core.llm.errors import (
     LLMProtocolError,
@@ -58,11 +57,7 @@ class OpenAIAdapter(LLMProvider):
 
     def __init__(self, config: LLMConfig):
         super().__init__(config)
-        self.openai_max_retries: int = (
-            OPENAI_MAX_RETRIES
-            if config.openai_max_retries is None or config.openai_max_retries < 0
-            else config.openai_max_retries
-        )
+        self.openai_max_retries: int = max(0, config.openai_max_retries)
         self.client: AsyncOpenAI = AsyncOpenAI(
             api_key=config.api_key.get_secret_value() if config.api_key else None,
             base_url=config.base_url,
