@@ -59,6 +59,11 @@ class DemoAgent(BaseAgent):
     def skill_directory(self) -> Path | None:
         return None
 
+    @property
+    @override
+    def allowed_model_profiles(self) -> set[str]:
+        return {"openai:gpt-4o-mini"}
+
     @override
     async def setup(self) -> None:
         self.register_tool(EchoTool())

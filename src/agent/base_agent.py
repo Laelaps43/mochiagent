@@ -63,7 +63,7 @@ class BaseAgent(ABC):
         self._skill_tool: SkillTool | None = None  # 缓存统一的 skill tool
         self._mcp_manager: MCPManager | None = None
 
-        logger.info(f"{self.__class__.__name__} initialized")
+        logger.info("{} initialized", self.__class__.__name__)
 
     def bind_context(self, ctx: AgentContext) -> None:
         """
@@ -73,7 +73,7 @@ class BaseAgent(ABC):
             ctx: Agent 运行上下文，封装了 session_manager 和 message_bus
         """
         self._ctx = ctx
-        logger.debug(f"Agent {self.name} bound to context")
+        logger.debug("Agent {} bound to context", self.name)
 
     @property
     def context(self) -> AgentContext:
@@ -129,7 +129,7 @@ class BaseAgent(ABC):
             tool: Tool instance to register
         """
         self.tool_registry.register(tool)
-        logger.info(f"Agent {self.name} registered tool: {tool.name}")
+        logger.info("Agent {} registered tool: {}", self.name, tool.name)
 
     async def register_mcp_tools(self, path: Path | None = None) -> None:
         """从 mcp.json 读取 mcpServers 并注册 MCP 工具。
@@ -211,12 +211,10 @@ class BaseAgent(ABC):
         pass
 
     @property
-    def allowed_model_profiles(self) -> set[str] | None:
-        """
-        Agent 可使用的 model profile 列表（格式：provider:model）。
-        返回 None 表示不限制。
-        """
-        return None
+    @abstractmethod
+    def allowed_model_profiles(self) -> set[str]:
+        """Agent 可使用的 model profile 列表（格式：provider:model）。"""
+        ...
 
     @property
     def default_model_profile(self) -> str | None:

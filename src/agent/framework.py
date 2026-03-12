@@ -102,10 +102,6 @@ class AgentFramework:
 
         normalized_allowed = self._normalize_allowed_profiles(agent.allowed_model_profiles)
 
-        # Agent 必须明确指定允许的 profiles
-        if normalized_allowed is None:
-            raise ValueError(f"Agent '{agent.name}' must specify allowed_model_profiles explicitly")
-
         # 过滤出 agent 可用的 llm_profiles
         agent_llm_profiles = {
             pid: cfg for pid, cfg in self._llm_profiles.items() if pid in normalized_allowed
@@ -131,7 +127,7 @@ class AgentFramework:
             _ = self._agents.pop(agent.name, None)
             raise
 
-        logger.info(f"Registered agent: {agent.name}")
+        logger.info("Registered agent: {}", agent.name)
 
     def get_agent(self, agent_name: str) -> BaseAgent | None:
         return self._agents.get(agent_name)
@@ -163,9 +159,7 @@ class AgentFramework:
         self._llm_profiles.update(profiles)
         logger.info("Loaded {} llm profiles", len(self._llm_profiles))
 
-    def _normalize_allowed_profiles(self, allowed_profiles: set[str] | None) -> set[str] | None:
-        if allowed_profiles is None:
-            return None
+    def _normalize_allowed_profiles(self, allowed_profiles: set[str]) -> set[str]:
         normalized_allowed: set[str] = set()
         for item in allowed_profiles:
             normalized_allowed.add(normalize_profile_id(item))
@@ -180,15 +174,15 @@ class AgentFramework:
         """
         try:
             await agent.setup()
-            logger.info(f"Agent '{agent.name}' setup completed")
+            logger.info("Agent '{}' setup completed", agent.name)
         except Exception as e:
-            logger.error(f"Failed to setup agent '{agent.name}': {e}")
+            logger.error("Failed to setup agent '{}': {}", agent.name, e)
             raise
 
     def unregister_agent(self, agent_name: str) -> None:
         if agent_name in self._agents:
             del self._agents[agent_name]
-            logger.info(f"Unregistered agent: {agent_name}")
+            logger.info("Unregistered agent: {}", agent_name)
 
     async def start(self) -> None:
         """启动框架"""
