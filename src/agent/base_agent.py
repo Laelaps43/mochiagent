@@ -1,10 +1,8 @@
 """Agent基类"""
 
-import json
 from abc import ABC, abstractmethod
-from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -63,7 +61,6 @@ class BaseAgent(ABC):
         # Skills registered by this agent
         self._registered_skills: dict[str, Skill] = {}
         self._skill_tool: SkillTool | None = None  # 缓存统一的 skill tool
-        self._mcp_stack: AsyncExitStack | None = None
         self._mcp_manager: MCPManager | None = None
 
         logger.info(f"{self.__class__.__name__} initialized")
@@ -135,86 +132,55 @@ class BaseAgent(ABC):
         logger.info(f"Agent {self.name} registered tool: {tool.name}")
 
     async def register_mcp_tools(self, path: Path | None = None) -> None:
-        """
-        从 mcp.json 读取 mcpServers 并注册 MCP 工具。
+        """从 mcp.json 读取 mcpServers 并注册 MCP 工具。
 
-        配置格式兼容主流 MCP 客户端:
-        {
-          "mcpServers": {
-            "serverName": { "command": "...", "args": [...] }
-          }
-        }
+        配置格式兼容主流 MCP 客户端::
+
+            {
+              "mcpServers": {
+                "serverName": { "command": "...", "args": [...] }
+              }
+            }
         """
         config_path = path or self.mcp_config_path
         if config_path is None:
             return
 
-        if not config_path.exists():
-            logger.info("MCP config not found for agent '{}': {}", self.name, config_path)
-            return
-
-        try:
-            payload = cast(dict[str, object], json.loads(config_path.read_text(encoding="utf-8")))
-        except Exception as exc:
-            logger.error("Failed to read MCP config '{}': {}", config_path, exc)
-            return
-
-        mcp_servers = cast("dict[str, object] | None", payload.get("mcpServers"))
-        if not isinstance(mcp_servers, dict) or not mcp_servers:
-            logger.info("No mcpServers configured in {}", config_path)
+        servers = MCPManager.load_config(config_path)
+        if not servers:
             return
 
         manager = MCPManager(
             registry=self.tool_registry,
             default_timeout=self.tool_runtime.timeout,
         )
-        self._mcp_manager = manager
-
-        stack = AsyncExitStack()
         try:
-            _ = await stack.__aenter__()
-            registered = await manager.connect_servers(
-                mcp_servers=mcp_servers,
-                stack=stack,
+            registered = await manager.connect_servers(servers)
+        except Exception as exc:
+            await manager.close()
+            logger.error(
+                "Failed to register MCP tools for agent '{}' from {}: {}",
+                self.name,
+                config_path,
+                exc,
             )
-            if registered <= 0:
-                logger.warning(
-                    "Agent '{}' MCP configured but no tools registered: {}",
-                    self.name,
-                    manager.snapshot(),
-                )
-                try:
-                    await stack.aclose()
-                except Exception as close_exc:
-                    logger.warning(
-                        "Agent '{}' MCP stack close after zero registration raised: {}",
-                        self.name,
-                        close_exc,
-                    )
-                return
-            self._mcp_stack = stack.pop_all()
+            return
+
+        if registered > 0:
+            self._mcp_manager = manager
             logger.info(
                 "Agent '{}' registered {} MCP tools from {}",
                 self.name,
                 registered,
                 config_path,
             )
-        except Exception as exc:
-            try:
-                await stack.aclose()
-            except Exception as close_exc:
-                logger.warning(
-                    "Agent '{}' MCP stack close after error raised: {}",
-                    self.name,
-                    close_exc,
-                )
-            logger.error(
-                "Failed to register MCP tools for agent '{}' from {}: {} | status={}",
+        else:
+            logger.warning(
+                "Agent '{}' MCP configured but no tools registered: {}",
                 self.name,
-                config_path,
-                exc,
                 manager.snapshot(),
             )
+            await manager.close()
 
     def get_mcp_status(self) -> dict[str, "MCPServerSnapshot"]:
         """
@@ -398,13 +364,7 @@ class BaseAgent(ABC):
         pass
 
     async def cleanup(self) -> None:
-        """
-        清理资源（可选覆盖）
-        """
-        if self._mcp_stack:
-            try:
-                await self._mcp_stack.aclose()
-            finally:
-                self._mcp_stack = None
+        """清理资源（可选覆盖）"""
         if self._mcp_manager:
-            self._mcp_manager.mark_disconnected()
+            await self._mcp_manager.close()
+            self._mcp_manager = None

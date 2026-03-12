@@ -43,21 +43,30 @@ class MessageBus:
 
     async def _process_events(self) -> None:
         logger.info("Event processing loop started")
-        while self._running:
+        pending: set[asyncio.Task[None]] = set()
+        while self._running or not self._queue.empty():
             try:
                 try:
                     event = await asyncio.wait_for(
                         self._queue.get(), timeout=MESSAGE_BUS_QUEUE_TIMEOUT
                     )
                 except asyncio.TimeoutError:
+                    if not self._running:
+                        break
                     continue
-                await self._handle_event(event)
+                _ = await self._semaphore.acquire()
+                task = asyncio.create_task(self._handle_event(event))
+                pending.add(task)
+                task.add_done_callback(pending.discard)
             except Exception as e:
                 logger.error(f"Error in event processing loop: {e}", exc_info=True)
+        # 等待所有已派发的 handler 完成
+        if pending:
+            _ = await asyncio.gather(*pending, return_exceptions=True)
         logger.info("Event processing loop stopped")
 
     async def _handle_event(self, event: Event) -> None:
-        async with self._semaphore:
+        try:
             handlers = self._subscribers.get(event.type, [])
             if handlers:
                 tasks = [handler(event) for handler in handlers]
@@ -67,6 +76,8 @@ class MessageBus:
                         logger.error(
                             f"Handler {handlers[i].__name__} failed for event {event.type.value}: {result}"
                         )
+        finally:
+            self._semaphore.release()
 
     async def start(self) -> None:
         if self._running:

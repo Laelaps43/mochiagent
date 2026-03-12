@@ -7,6 +7,14 @@ from agent.core.tools import Tool
 
 
 class EditFileTool(Tool):
+    """
+    编辑文件工具
+
+    支持以下操作：
+    1. 替换指定字符串（支持替换所有）
+    2. 覆盖写入文件全部内容
+    """
+
     @property
     @override
     def name(self) -> str:

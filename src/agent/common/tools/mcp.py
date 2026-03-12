@@ -14,6 +14,8 @@ class _MCPManagerProtocol(Protocol):
     def can_execute(self, server_name: str) -> bool: ...
     def record_tool_success(self, server_name: str) -> None: ...
     def record_tool_failure(self, server_name: str, reason: str) -> None: ...
+    def get_session(self, server_name: str) -> ClientSession | None: ...
+    async def reconnect_server(self, server_name: str) -> bool: ...
 
 
 def _safe_name(value: str) -> str:
@@ -21,15 +23,19 @@ def _safe_name(value: str) -> str:
 
 
 class MCPToolWrapper(Tool):
+    """
+    MCP 工具包装器
+
+    将 MCP 工具包装成 Agent 工具
+    """
+
     def __init__(
         self,
-        session: ClientSession,
         server_name: str,
         tool_def: MCPToolDef,
         timeout: int,
-        manager: _MCPManagerProtocol | None = None,
+        manager: _MCPManagerProtocol,
     ):
-        self._session: ClientSession = session
         self._server_name: str = server_name
         self._original_name: str = tool_def.name
         self._name: str = f"mcp_{_safe_name(server_name)}_{_safe_name(tool_def.name)}"
@@ -39,7 +45,7 @@ class MCPToolWrapper(Tool):
             "properties": {},
         }
         self._timeout: int = timeout
-        self._manager: _MCPManagerProtocol | None = manager
+        self._manager: _MCPManagerProtocol = manager
 
     @property
     @override
@@ -58,23 +64,28 @@ class MCPToolWrapper(Tool):
 
     @override
     async def execute(self, **kwargs: object) -> str:
-        if self._manager and not self._manager.can_execute(self._server_name):
+        if not self._manager.can_execute(self._server_name):
             return f"MCP server '{self._server_name}' is cooling down after failures"
+
+        session = self._manager.get_session(self._server_name)
+        if session is None:
+            if not await self._manager.reconnect_server(self._server_name):
+                return f"MCP server '{self._server_name}' is not connected"
+            session = self._manager.get_session(self._server_name)
+            if session is None:
+                return f"MCP server '{self._server_name}' reconnection failed"
 
         try:
             result = await asyncio.wait_for(
-                self._session.call_tool(self._original_name, arguments=kwargs),
+                session.call_tool(self._original_name, arguments=kwargs),
                 timeout=self._timeout,
             )
-            if self._manager:
-                self._manager.record_tool_success(self._server_name)
+            self._manager.record_tool_success(self._server_name)
         except asyncio.TimeoutError:
-            if self._manager:
-                self._manager.record_tool_failure(self._server_name, "timeout")
+            self._manager.record_tool_failure(self._server_name, "timeout")
             return f"MCP tool timeout after {self._timeout}s"
         except Exception as exc:
-            if self._manager:
-                self._manager.record_tool_failure(self._server_name, str(exc))
+            self._manager.record_tool_failure(self._server_name, str(exc))
             return f"MCP tool call failed: {exc}"
 
         parts: list[str] = []

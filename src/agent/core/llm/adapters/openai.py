@@ -8,21 +8,27 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Awaitable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import dataclass
 from typing import NoReturn, cast, override
 
 from loguru import logger
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, AsyncStream
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,
+)
 
 from agent.constants import OPENAI_MAX_RETRIES
 from agent.core.llm.base import LLMProvider
-from agent.core.message import Message as InternalMessage
 from agent.core.llm.errors import (
     LLMProtocolError,
     LLMProviderError,
     LLMRateLimitError,
     LLMTransportError,
 )
+from agent.core.message import Message as InternalMessage
 from agent.core.security import redact_text
 from agent.types import (
     LLMConfig,
@@ -34,50 +40,14 @@ from agent.types import (
 )
 
 
+@dataclass(slots=True)
 class _ResponseMeta:
-    __slots__: tuple[str, ...] = (
-        "status_code",
-        "content_type",
-        "x_log_id",
-        "provider_code",
-        "provider_message",
-        "response_body",
-    )
-
-    def __init__(
-        self,
-        status_code: int | None = None,
-        content_type: str | None = None,
-        x_log_id: str | None = None,
-        provider_code: str | None = None,
-        provider_message: str | None = None,
-        response_body: str | None = None,
-    ) -> None:
-        self.status_code: int | None = status_code
-        self.content_type: str | None = content_type
-        self.x_log_id: str | None = x_log_id
-        self.provider_code: str | None = provider_code
-        self.provider_message: str | None = provider_message
-        self.response_body: str | None = response_body
-
-
-def _gstr(obj: object, attr: str, default: str = "") -> str:
-    val: object = cast(object, getattr(obj, attr, default))
-    return str(val) if val is not None else default
-
-
-def _gint(obj: object, attr: str, default: int = 0) -> int:
-    val: object = cast(object, getattr(obj, attr, default))
-    if val is None:
-        return default
-    try:
-        return int(str(val))
-    except (TypeError, ValueError):
-        return default
-
-
-def _gobj(obj: object, attr: str) -> object:
-    return cast(object, getattr(obj, attr, None))
+    status_code: int | None = None
+    content_type: str | None = None
+    x_log_id: str | None = None
+    provider_code: str | None = None
+    provider_message: str | None = None
+    response_body: str | None = None
 
 
 class OpenAIAdapter(LLMProvider):
@@ -88,33 +58,17 @@ class OpenAIAdapter(LLMProvider):
 
     def __init__(self, config: LLMConfig):
         super().__init__(config)
-        self.openai_max_retries: int = self._resolve_max_retries(config.openai_max_retries)
+        self.openai_max_retries: int = (
+            OPENAI_MAX_RETRIES
+            if config.openai_max_retries is None or config.openai_max_retries < 0
+            else config.openai_max_retries
+        )
         self.client: AsyncOpenAI = AsyncOpenAI(
             api_key=config.api_key,
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=self.openai_max_retries,
         )
-
-    @staticmethod
-    def _resolve_max_retries(configured_retries: int | None) -> int:
-        if configured_retries is None or configured_retries < 0:
-            return OPENAI_MAX_RETRIES
-        return configured_retries
-
-    @staticmethod
-    def _prepare_tools(tools: list[ToolDefinition]) -> list[dict[str, object]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                },
-            }
-            for tool in tools
-        ]
 
     def _build_request_params(
         self,
@@ -133,7 +87,7 @@ class OpenAIAdapter(LLMProvider):
         if self.config.max_tokens:
             params["max_tokens"] = self.config.max_tokens
         if tools:
-            params["tools"] = self._prepare_tools(tools)
+            params["tools"] = self.prepare_tools(tools)
             params["tool_choice"] = "auto"
         params.update(self.config.extra_params)
         params.update(kwargs)
@@ -142,41 +96,47 @@ class OpenAIAdapter(LLMProvider):
         return params
 
     @staticmethod
-    def _extract_response_meta(exc: Exception) -> _ResponseMeta:
-        meta = _ResponseMeta()
+    def _parse_error_body(body_text: str) -> tuple[str | None, str | None]:
+        """从 JSON error body 中提取 provider_code 和 provider_message。"""
+        try:
+            payload = cast("dict[str, object]", json.loads(body_text))
+            error_obj = payload.get("error")
+            if not isinstance(error_obj, dict):
+                return None, None
+            error = cast("dict[str, object]", error_obj)
+            code: object | None = error.get("code")
+            message: object | None = error.get("message")
+            return (
+                str(code) if code is not None else None,
+                redact_text(str(message)) if message else None,
+            )
+        except Exception:
+            return None, None
 
-        response: object = cast(object, getattr(exc, "response", None))
+    @staticmethod
+    def _extract_response_meta(exc: Exception) -> _ResponseMeta:
+        response: object = getattr(exc, "response", None)
         if response is None:
-            return meta
+            return _ResponseMeta()
 
         try:
-            meta.status_code = cast("int | None", _gobj(response, "status_code"))
-            headers = cast(dict[str, str], _gobj(response, "headers") or {})
-            meta.content_type = headers.get("content-type", "")
-            meta.x_log_id = headers.get("x-log-id", "")
+            headers = cast("dict[str, str]", getattr(response, "headers", None) or {})
+            body_text = str(getattr(response, "text", "") or "")
+            if len(body_text) > 1200:
+                body_text = body_text[:1200] + "...(truncated)"
 
-            body_text: str = _gstr(response, "text")
-            if body_text:
-                if len(body_text) > 1200:
-                    body_text = body_text[:1200] + "...(truncated)"
-                meta.response_body = body_text
+            provider_code, provider_message = OpenAIAdapter._parse_error_body(body_text)
 
-                try:
-                    payload = cast("dict[str, object]", json.loads(body_text))
-                    error_obj = cast("dict[str, object] | None", payload.get("error"))
-                    if isinstance(error_obj, dict):
-                        code = error_obj.get("code")
-                        if code is not None:
-                            meta.provider_code = str(code)
-                        message = error_obj.get("message")
-                        if message:
-                            meta.provider_message = redact_text(str(message))
-                except Exception:
-                    pass
+            return _ResponseMeta(
+                status_code=cast("int | None", getattr(response, "status_code", None)),
+                content_type=headers.get("content-type", ""),
+                x_log_id=headers.get("x-log-id", ""),
+                provider_code=provider_code,
+                provider_message=provider_message,
+                response_body=body_text or None,
+            )
         except Exception:
-            pass
-
-        return meta
+            return _ResponseMeta()
 
     def _map_provider_exception(self, operation: str, exc: Exception) -> LLMProviderError:
         if isinstance(exc, LLMProviderError):
@@ -305,12 +265,12 @@ class OpenAIAdapter(LLMProvider):
             redact_text(repr(exc)),
         )
 
-        response: object = cast(object, getattr(exc, "response", None))
+        response: object = getattr(exc, "response", None)
         if response is not None:
             try:
-                headers = cast(dict[str, str], _gobj(response, "headers") or {})
+                headers = cast("dict[str, str]", getattr(response, "headers", None) or {})
                 content_type: str = headers.get("content-type", "")
-                body_text: str = _gstr(response, "text")
+                body_text: str = str(getattr(response, "text", "") or "")
                 if len(body_text) > 1200:
                     body_text = body_text[:1200] + "...(truncated)"
                 logger.error(
@@ -329,111 +289,106 @@ class OpenAIAdapter(LLMProvider):
 
     @staticmethod
     def _merge_tool_call_delta(
-        tool_call: object,
+        tool_call: ChoiceDeltaToolCall,
         accumulated_tool_calls: dict[int, ToolCallPayload],
     ) -> None:
-        tc_index = _gobj(tool_call, "index")
-        idx = int(tc_index) if isinstance(tc_index, int) else len(accumulated_tool_calls)
+        idx = tool_call.index
         if idx not in accumulated_tool_calls:
             accumulated_tool_calls[idx] = ToolCallPayload()
 
         entry = accumulated_tool_calls[idx]
 
-        tc_id = _gstr(tool_call, "id")
-        if tc_id:
-            entry.id = tc_id
+        if tool_call.id:
+            entry.id = tool_call.id
 
-        tc_function = _gobj(tool_call, "function")
-        if not tc_function:
+        fn = tool_call.function
+        if not fn:
             return
 
-        fn_name = _gstr(tc_function, "name")
-        if fn_name:
-            entry.function.name = fn_name
+        if fn.name:
+            entry.function.name = fn.name
 
-        fn_arguments = _gstr(tc_function, "arguments")
-        if fn_arguments:
-            entry.function.arguments += fn_arguments
+        if fn.arguments:
+            entry.function.arguments += fn.arguments
 
     @staticmethod
     def _parse_stream_chunk(
-        chunk: object,
+        chunk: ChatCompletionChunk,
         accumulated_tool_calls: dict[int, ToolCallPayload],
     ) -> LLMStreamChunk | None:
-        choices = _gobj(chunk, "choices")
-        choice = cast(list[object], choices)[0] if choices else None
+        choice = chunk.choices[0] if chunk.choices else None
         if not choice:
             return None
 
         result = LLMStreamChunk()
-        delta = _gobj(choice, "delta")
+        delta = choice.delta
         has_data = False
 
         if delta:
-            delta_content = _gstr(delta, "content")
-            if delta_content:
-                result.content = delta_content
+            if delta.content:
+                result.content = delta.content
                 has_data = True
 
-            reasoning_content = _gobj(delta, "reasoning_content") or _gobj(delta, "reasoning")
+            # reasoning_content / reasoning 是部分厂商（DeepSeek 等）的扩展字段
+            reasoning_content: object | None = getattr(
+                delta, "reasoning_content", None
+            ) or getattr(delta, "reasoning", None)
             if reasoning_content:
                 result.thinking = str(reasoning_content)
                 has_data = True
 
-            delta_tool_calls = _gobj(delta, "tool_calls")
-            if delta_tool_calls:
-                for tool_call in cast(list[object], delta_tool_calls):
-                    OpenAIAdapter._merge_tool_call_delta(tool_call, accumulated_tool_calls)
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    OpenAIAdapter._merge_tool_call_delta(tc, accumulated_tool_calls)
 
-        finish_reason = _gstr(choice, "finish_reason")
-        if finish_reason:
-            result.finish_reason = finish_reason
+        if choice.finish_reason:
+            result.finish_reason = choice.finish_reason
             has_data = True
             if accumulated_tool_calls:
                 ordered_calls = [accumulated_tool_calls[k] for k in sorted(accumulated_tool_calls)]
                 result.tool_calls = ordered_calls
-        usage = _gobj(chunk, "usage")
+
+        usage = chunk.usage
         if usage is not None:
-            details = _gobj(usage, "completion_tokens_details")
+            details = usage.completion_tokens_details
             result.usage = ProviderUsage(
-                input_tokens=_gint(usage, "prompt_tokens"),
-                output_tokens=_gint(usage, "completion_tokens"),
-                reasoning_tokens=_gint(details, "reasoning_tokens") if details else 0,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                reasoning_tokens=details.reasoning_tokens or 0 if details else 0,
             )
             has_data = True
 
         return result if has_data else None
 
     @staticmethod
-    def _parse_complete_response(response: object) -> LLMStreamChunk:
-        choices = _gobj(response, "choices")
-        choice = cast(list[object], choices)[0] if choices else None
-        message = _gobj(choice, "message")
+    def _parse_complete_response(response: ChatCompletion) -> LLMStreamChunk:
+        choice = response.choices[0] if response.choices else None
+        message = choice.message if choice else None
         result = LLMStreamChunk(
-            content=_gstr(message, "content"),
-            finish_reason=_gstr(choice, "finish_reason"),
+            content=message.content or "" if message else "",
+            finish_reason=choice.finish_reason if choice else "",
         )
 
-        message_tool_calls = _gobj(message, "tool_calls")
-        if message_tool_calls:
+        if message and message.tool_calls:
             result.tool_calls = [
                 ToolCallPayload(
-                    id=_gstr(tc, "id"),
+                    id=tc.id,
                     function=ToolFunctionPayload(
-                        name=_gstr(_gobj(tc, "function"), "name"),
-                        arguments=_gstr(_gobj(tc, "function"), "arguments"),
+                        name=tc.function.name,
+                        arguments=tc.function.arguments,
                     ),
                 )
-                for tc in cast(list[object], message_tool_calls)
+                for tc in message.tool_calls
+                if isinstance(tc, ChatCompletionMessageFunctionToolCall)
             ]
 
-        usage = _gobj(response, "usage")
+        usage = response.usage
         if usage is not None:
-            details = _gobj(usage, "completion_tokens_details")
+            details = usage.completion_tokens_details
             result.usage = ProviderUsage(
-                input_tokens=_gint(usage, "prompt_tokens"),
-                output_tokens=_gint(usage, "completion_tokens"),
-                reasoning_tokens=_gint(details, "reasoning_tokens") if details else 0,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                reasoning_tokens=details.reasoning_tokens or 0 if details else 0,
             )
 
         return result
@@ -462,9 +417,11 @@ class OpenAIAdapter(LLMProvider):
         start_time = time.time()
 
         try:
-            _create = cast(Callable[..., Awaitable[object]], self.client.chat.completions.create)
-            _response = await _create(**params)
-            response = cast(AsyncIterator[object], _response)
+            _create = cast(
+                Callable[..., Awaitable[AsyncStream[ChatCompletionChunk]]],
+                self.client.chat.completions.create,
+            )
+            response = await _create(**params)
 
             first_chunk_time = None
             chunk_count = 0
@@ -510,9 +467,12 @@ class OpenAIAdapter(LLMProvider):
         )
 
         try:
-            _create = cast(Callable[..., Awaitable[object]], self.client.chat.completions.create)
-            _response = await _create(**params)
-            return self._parse_complete_response(_response)
+            _create = cast(
+                Callable[..., Awaitable[ChatCompletion]],
+                self.client.chat.completions.create,
+            )
+            response = await _create(**params)
+            return self._parse_complete_response(response)
         except (asyncio.CancelledError, GeneratorExit):
             raise
         except Exception as exc:

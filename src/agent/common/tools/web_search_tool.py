@@ -10,6 +10,10 @@ from agent.core.tools import Tool
 
 
 class WebSearchTool(Tool):
+    """
+    Search the web and return top results.
+    """
+
     def __init__(self, api_key: str = ""):
         self.api_key: str = api_key
 

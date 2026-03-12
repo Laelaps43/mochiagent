@@ -7,6 +7,12 @@ from agent.core.tools import Tool
 
 
 class ReadFileTool(Tool):
+    """
+    读取文件内容
+
+    支持按需读取文件内容，避免大文件全量加载
+    """
+
     @property
     @override
     def name(self) -> str:
@@ -56,8 +62,7 @@ class ReadFileTool(Tool):
         if file_path.is_dir():
             return {"success": False, "error": f"Path is a directory: {path}"}
 
-        content = file_path.read_text(encoding=encoding)
-        total_size = len(content)
+        total_size = file_path.stat().st_size
         safe_offset = max(0, offset)
         if safe_offset > total_size:
             safe_offset = total_size
@@ -67,9 +72,14 @@ class ReadFileTool(Tool):
         else:
             safe_limit = max(1, max_chars)
 
-        chunk = content[safe_offset : safe_offset + safe_limit]
+        # 按需读取，避免大文件全量加载
+        with file_path.open("r", encoding=encoding) as f:
+            if safe_offset > 0:
+                _ = f.read(safe_offset)
+            chunk = f.read(safe_limit)
+            eof = f.read(1) == ""
+
         next_offset = safe_offset + len(chunk)
-        eof = next_offset >= total_size
         truncated = not eof
         return {
             "success": True,

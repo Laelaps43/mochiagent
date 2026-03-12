@@ -1,47 +1,69 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import time
+from uuid import uuid4
 
-from agent.core._numeric import to_int, to_non_negative_int
-
-if TYPE_CHECKING:
-    from agent.types import ContextBudgetSource, ProviderUsage, TokenUsage
+from agent.constants import UUID_PREFIX_LENGTH
 
 __all__ = [
     "to_non_negative_int",
     "to_int",
-    "make_token_usage",
-    "extract_turn_tokens",
+    "gen_id",
+    "now_ms",
     "estimate_tokens",
     "truncate_text",
     "parse_name_list",
     "normalize_profile_id",
+    "format_exception",
 ]
 
 
-def make_token_usage(
-    input: int = 0,
-    output: int = 0,
-    reasoning: int = 0,
-) -> TokenUsage:
-    from agent.types import TokenUsage
-
-    return TokenUsage(
-        input=max(input, 0),
-        output=max(output, 0),
-        reasoning=max(reasoning, 0),
-    )
+# ---- numeric helpers ----
 
 
-def extract_turn_tokens(usage: ProviderUsage | None) -> tuple[TokenUsage, ContextBudgetSource]:
-    if usage is None:
-        return make_token_usage(), "estimated"
+def _parse_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
-    return make_token_usage(
-        usage.input_tokens,
-        usage.output_tokens,
-        usage.reasoning_tokens,
-    ), "provider"
+
+def to_non_negative_int(value: object, *, default: int = 0) -> int:
+    parsed = _parse_int(value)
+    if parsed is None:
+        return default
+    return max(parsed, 0)
+
+
+def to_int(value: object, *, default: int = 0, minimum: int = 0) -> int:
+    parsed = _parse_int(value)
+    if parsed is None:
+        parsed = default
+    return max(minimum, parsed)
+
+
+# ---- id / time helpers ----
+
+
+def gen_id(prefix: str = "") -> str:
+    """生成带可选前缀的短 UUID 标识符。"""
+    return f"{prefix}{uuid4().hex[:UUID_PREFIX_LENGTH]}"
+
+
+def now_ms() -> int:
+    """当前时间戳（毫秒）。"""
+    return int(time.time() * 1000)
+
+
+# ---- text / token helpers ----
 
 
 def estimate_tokens(text_or_chars: str | int, chars_per_token: float) -> int:
@@ -61,6 +83,35 @@ def parse_name_list(raw: str | None) -> set[str]:
     if not raw:
         return set()
     return {item.strip().lower() for item in raw.split(",") if item and item.strip()}
+
+
+# ---- exception helpers ----
+
+
+def _collect_exception_messages(exc: BaseException, out: list[str]) -> None:
+    if isinstance(exc, BaseExceptionGroup):
+        for sub in exc.exceptions:
+            _collect_exception_messages(sub, out)
+        return
+    out.append(f"{type(exc).__name__}: {exc}")
+
+
+def format_exception(exc: BaseException) -> str:
+    """将异常（含 ExceptionGroup）格式化为单行摘要。"""
+    messages: list[str] = []
+    _collect_exception_messages(exc, messages)
+    if not messages:
+        return f"{type(exc).__name__}: {exc}"
+    unique: list[str] = []
+    for msg in messages:
+        if msg not in unique:
+            unique.append(msg)
+    if len(unique) <= 3:
+        return " | ".join(unique)
+    return " | ".join(unique[:3]) + f" | ... (+{len(unique) - 3} more)"
+
+
+# ---- profile helpers ----
 
 
 def normalize_profile_id(profile_id: str) -> str:

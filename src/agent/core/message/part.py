@@ -2,13 +2,11 @@
 Part Models - Part 数据模型定义
 """
 
-import time
-from typing import Annotated, Literal, cast, override
-from uuid import uuid4
+from typing import Annotated, Literal, override
 
-from pydantic import BaseModel, Discriminator
+from pydantic import BaseModel, Discriminator, Field
 
-from agent.constants import UUID_PREFIX_LENGTH
+from agent.core.utils import gen_id, now_ms
 from agent.types import ToolCallPayload, ToolResult
 
 
@@ -22,24 +20,9 @@ class TimeInfo(BaseModel):
 class PartBase(BaseModel):
     """Part 基础字段"""
 
-    id: str
+    id: str = Field(default_factory=lambda: gen_id("part_"))
     session_id: str
     message_id: str
-
-    @classmethod
-    def from_dict(cls, _data: dict[str, object], _session_id: str, _message_id: str) -> "Part":
-        """
-        从字典创建 Part（子类必须实现）
-
-        Args:
-            data: Part 数据字典（不包含 type 字段）
-            session_id: 会话 ID
-            message_id: 消息 ID
-
-        Returns:
-            Part 实例
-        """
-        raise NotImplementedError(f"{cls.__name__} must implement from_dict()")
 
     def to_llm_format(self) -> dict[str, object] | None:
         """
@@ -67,7 +50,7 @@ class UserTextInput(BaseModel):
     metadata: dict[str, object] | None = None
 
     def to_part(self, session_id: str, message_id: str) -> "TextPart":
-        return TextPart.create_fast(
+        return TextPart(
             session_id=session_id,
             message_id=message_id,
             text=self.text,
@@ -90,63 +73,14 @@ class TextPart(PartBase):
     text: str
     synthetic: bool | None = None  # 是否为系统生成
     ignored: bool | None = None  # 是否忽略
-    time: TimeInfo | None = None
+    time: TimeInfo = Field(default_factory=lambda: TimeInfo(start=now_ms()))
     metadata: dict[str, object] | None = None
-
-    @classmethod
-    def create_fast(
-        cls,
-        *,
-        session_id: str,
-        message_id: str,
-        text: str,
-        synthetic: bool | None = None,
-        ignored: bool | None = None,
-        metadata: dict[str, object] | None = None,
-    ) -> "TextPart":
-        return cls(
-            id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
-            session_id=session_id,
-            message_id=message_id,
-            text=text,
-            synthetic=synthetic,
-            ignored=ignored,
-            time=TimeInfo(start=int(time.time() * 1000)),
-            metadata=metadata,
-        )
-
-    @classmethod
-    @override
-    def from_dict(cls, data: dict[str, object], session_id: str, message_id: str) -> "TextPart":
-        """从字典创建 TextPart"""
-        return cls(
-            id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
-            session_id=session_id,
-            message_id=message_id,
-            text=cast(str, data["text"]),
-            synthetic=cast("bool | None", data.get("synthetic")),
-            ignored=cast("bool | None", data.get("ignored")),
-            time=TimeInfo(start=int(time.time() * 1000)),
-            metadata=cast("dict[str, object] | None", data.get("metadata")),
-        )
 
     @override
     def to_llm_format(self) -> dict[str, object] | None:
         """文本内容贡献给 LLM 消息的 content"""
         return {"type": "text", "content": self.text}
 
-    def to_event_payload(self) -> dict[str, object]:
-        return {
-            "id": self.id,
-            "session_id": self.session_id,
-            "message_id": self.message_id,
-            "type": "text",
-            "text": self.text,
-            "synthetic": self.synthetic,
-            "ignored": self.ignored,
-            "time": {"start": self.time.start, "end": self.time.end} if self.time else None,
-            "metadata": self.metadata,
-        }
 
 
 # ============ ReasoningPart - AI 思考过程 ============
@@ -160,61 +94,11 @@ class ReasoningPart(PartBase):
     time: TimeInfo
     metadata: dict[str, object] | None = None
 
-    @classmethod
-    def create_fast(
-        cls,
-        *,
-        session_id: str,
-        message_id: str,
-        text: str,
-        start: int,
-        end: int,
-        metadata: dict[str, object] | None = None,
-    ) -> "ReasoningPart":
-        return cls(
-            id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
-            session_id=session_id,
-            message_id=message_id,
-            text=text,
-            time=TimeInfo(start=start, end=end),
-            metadata=metadata,
-        )
-
-    @classmethod
-    @override
-    def from_dict(
-        cls, data: dict[str, object], session_id: str, message_id: str
-    ) -> "ReasoningPart":
-        """从字典创建 ReasoningPart"""
-        return cls(
-            id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
-            session_id=session_id,
-            message_id=message_id,
-            text=cast(str, data["text"]),
-            time=TimeInfo(
-                start=cast(int, cast(dict[str, object], data["time"])["start"]),
-                end=cast("int | None", cast(dict[str, object], data["time"]).get("end")),
-            )
-            if "time" in data
-            else TimeInfo(start=int(time.time() * 1000)),
-            metadata=cast("dict[str, object] | None", data.get("metadata")),
-        )
-
     @override
     def to_llm_format(self) -> dict[str, object] | None:
         """思考过程不发送给 LLM（内部数据）"""
         return None
 
-    def to_event_payload(self) -> dict[str, object]:
-        return {
-            "id": self.id,
-            "session_id": self.session_id,
-            "message_id": self.message_id,
-            "type": "reasoning",
-            "text": self.text,
-            "time": {"start": self.time.start, "end": self.time.end},
-            "metadata": self.metadata,
-        }
 
 
 # ============ ToolPart - 工具调用 ============
@@ -289,31 +173,16 @@ class ToolPart(PartBase):
     def create_running(
         cls, session_id: str, message_id: str, tool_call: "ToolCallPayload"
     ) -> "ToolPart":
-        """
-        创建 running 状态的 ToolPart
-
-        Args:
-            session_id: 会话ID
-            message_id: 消息ID
-            tool_call: 工具调用对象
-
-        Returns:
-            ToolPart
-        """
-        call_id = tool_call.id
-        tool_name = tool_call.function.name or "unknown"
-        arguments = tool_call.function.arguments or "{}"
-
+        name = tool_call.function.name or "unknown"
         return cls(
-            id=f"part_{uuid4().hex[:UUID_PREFIX_LENGTH]}",
             session_id=session_id,
             message_id=message_id,
-            call_id=call_id,
-            tool=tool_name,
+            call_id=tool_call.id,
+            tool=name,
             state=ToolStateRunning(
-                input=ToolInput(arguments=arguments),
-                title=tool_name,
-                time=TimeInfo(start=int(time.time() * 1000)),
+                input=ToolInput(arguments=tool_call.function.arguments or "{}"),
+                title=name,
+                time=TimeInfo(start=now_ms()),
             ),
         )
 
@@ -372,7 +241,7 @@ class ToolPart(PartBase):
                 },
                 time=TimeInfo(
                     start=self.state.time.start,
-                    end=int(time.time() * 1000),
+                    end=now_ms(),
                 ),
             ),
             metadata=self.metadata,
@@ -411,7 +280,7 @@ class ToolPart(PartBase):
                 },
                 time=TimeInfo(
                     start=self.state.time.start,
-                    end=int(time.time() * 1000),
+                    end=now_ms(),
                 ),
             ),
             metadata=self.metadata,
@@ -458,17 +327,6 @@ class ToolPart(PartBase):
 
         return result if len(result) > 1 else None  # 只有 type 时返回 None
 
-    def to_event_payload(self) -> dict[str, object]:
-        return {
-            "id": self.id,
-            "session_id": self.session_id,
-            "message_id": self.message_id,
-            "type": "tool",
-            "call_id": self.call_id,
-            "tool": self.tool,
-            "state": self.state.model_dump(),
-            "metadata": self.metadata,
-        }
 
 
 # ============ Part Union Type ============

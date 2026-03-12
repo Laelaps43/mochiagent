@@ -3,69 +3,88 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import time
 from contextlib import AsyncExitStack
-from collections.abc import Mapping
-from typing import cast
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import httpx
 from loguru import logger
 
 from agent.core.tools import ToolRegistry
-from agent.core.utils import to_int
+from agent.core.utils import format_exception, to_int
 from .types import MCPServerConfig, MCPServerSnapshot, MCPServerSnapshotConfig, MCPServerState
 
+if TYPE_CHECKING:
+    from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+    from mcp import ClientSession
+    from mcp.shared.message import SessionMessage
 
-def _collect_exception_messages(exc: BaseException, out: list[str]) -> None:
-    if isinstance(exc, BaseExceptionGroup):
-        for sub in exc.exceptions:
-            _collect_exception_messages(sub, out)
-        return
-    out.append(f"{type(exc).__name__}: {exc}")
-
-
-def _format_exception(exc: BaseException) -> str:
-    messages: list[str] = []
-    _collect_exception_messages(exc, messages)
-    if not messages:
-        return f"{type(exc).__name__}: {exc}"
-    unique: list[str] = []
-    for msg in messages:
-        if msg not in unique:
-            unique.append(msg)
-    if len(unique) <= 3:
-        return " | ".join(unique)
-    return " | ".join(unique[:3]) + f" | ... (+{len(unique) - 3} more)"
+    _ReadStream = MemoryObjectReceiveStream[SessionMessage | Exception]
+    _WriteStream = MemoryObjectSendStream[SessionMessage]
 
 
 class MCPManager:
     """Agent-scoped MCP runtime state manager."""
 
-    def __init__(self, registry: ToolRegistry, default_timeout: int = 30):
+    def __init__(self, registry: ToolRegistry, default_timeout: int = 30) -> None:
         self._registry: ToolRegistry = registry
         self._default_timeout: int = default_timeout
         self._states: dict[str, MCPServerState] = {}
-
-    @staticmethod
-    def _coerce_server_config(raw: object) -> MCPServerConfig:
-        if isinstance(raw, MCPServerConfig):
-            return raw
-        if isinstance(raw, dict):
-            fields = set(MCPServerConfig.model_fields.keys())
-            raw_dict = cast(dict[str, object], raw)
-            return MCPServerConfig.model_validate(
-                {k: v for k, v in raw_dict.items() if k in fields}
-            )
-        logger.warning(
-            "MCP server config is not a dict (got {}), using empty config",
-            type(raw).__name__,
-        )
-        return MCPServerConfig()
+        self._configs: dict[str, MCPServerConfig] = {}
+        self._sessions: dict[str, ClientSession] = {}
+        self._server_stacks: dict[str, AsyncExitStack] = {}
+        self._server_tool_names: dict[str, list[str]] = {}
+        self._reconnect_locks: dict[str, asyncio.Lock] = {}
 
     @property
     def registry(self) -> ToolRegistry:
         return self._registry
+
+    @staticmethod
+    def load_config(path: Path) -> dict[str, MCPServerConfig]:
+        """Load MCP server configs from a JSON file.
+
+        Returns:
+            Dict mapping server names to configs (empty if file missing or invalid).
+        """
+        if not path.exists():
+            logger.info("MCP config not found: {}", path)
+            return {}
+        try:
+            data = cast(object, json.loads(path.read_text(encoding="utf-8")))
+        except Exception as exc:
+            logger.error("Failed to read MCP config '{}': {}", path, exc)
+            return {}
+
+        if not isinstance(data, dict):
+            logger.info("MCP config is not a JSON object in {}", path)
+            return {}
+
+        payload = cast(dict[str, object], data)
+        raw_servers: object = payload.get("mcpServers")
+        if not isinstance(raw_servers, dict) or not raw_servers:
+            logger.info("No mcpServers configured in {}", path)
+            return {}
+
+        servers_map = cast(dict[str, object], raw_servers)
+        servers: dict[str, MCPServerConfig] = {}
+        for name, raw in servers_map.items():
+            if isinstance(raw, MCPServerConfig):
+                servers[name] = raw
+            elif isinstance(raw, dict):
+                try:
+                    servers[name] = MCPServerConfig.model_validate(raw)
+                except Exception as exc:
+                    logger.warning("Invalid MCP server config '{}': {}", name, exc)
+            else:
+                logger.warning(
+                    "MCP server config '{}' is not a dict, skipped",
+                    name,
+                )
+        return servers
 
     def register_server(self, server_name: str, cfg: MCPServerConfig) -> MCPServerState:
         state = self._states.get(server_name) or MCPServerState()
@@ -82,26 +101,13 @@ class MCPManager:
         return state
 
     def snapshot(self) -> dict[str, MCPServerSnapshot]:
-        return {
-            name: MCPServerSnapshot(
-                status=state.status,
-                last_error=state.last_error,
-                consecutive_failures=state.consecutive_failures,
-                last_connected_at=state.last_connected_at,
-                tool_count=state.tool_count,
-                next_retry_at=state.next_retry_at,
-                config=MCPServerSnapshotConfig(
-                    connect_timeout_ms=state.connect_timeout_ms,
-                    max_retries=state.max_retries,
-                    retry_initial_ms=state.retry_initial_ms,
-                    retry_max_ms=state.retry_max_ms,
-                    failure_threshold=state.failure_threshold,
-                    cooldown_sec=state.cooldown_sec,
-                    tool_timeout_sec=state.tool_timeout_sec,
-                ),
-            )
-            for name, state in self._states.items()
-        }
+        result: dict[str, MCPServerSnapshot] = {}
+        for name, state in self._states.items():
+            data = state.model_dump()
+            snap = MCPServerSnapshot.model_validate(data)
+            snap.config = MCPServerSnapshotConfig.model_validate(data)
+            result[name] = snap
+        return result
 
     def set_status(self, server_name: str, status: str) -> None:
         state = self._states.get(server_name)
@@ -148,6 +154,7 @@ class MCPManager:
         state.last_error = reason
 
         if state.consecutive_failures >= state.failure_threshold:
+            _ = self._sessions.pop(server_name, None)
             state.next_retry_at = time.time() + state.cooldown_sec
             self.set_status(server_name, "failed")
             logger.warning(
@@ -161,218 +168,251 @@ class MCPManager:
 
         self.set_status(server_name, "degraded")
 
+    def get_session(self, server_name: str) -> ClientSession | None:
+        return self._sessions.get(server_name)
+
+    async def reconnect_server(self, server_name: str) -> bool:
+        """Close old connection and rebuild for a single server. Returns True on success."""
+        lock = self._reconnect_locks.setdefault(server_name, asyncio.Lock())
+        if lock.locked():
+            # Another coroutine is already reconnecting; wait and check result.
+            async with lock:
+                return self._sessions.get(server_name) is not None
+
+        async with lock:
+            cfg = self._configs.get(server_name)
+            if cfg is None:
+                return False
+            # Tear down old stack
+            old_stack = self._server_stacks.pop(server_name, None)
+            if old_stack:
+                try:
+                    await old_stack.aclose()
+                except Exception:
+                    pass
+            _ = self._sessions.pop(server_name, None)
+            self._unregister_server_tools(server_name)
+            # Reconnect
+            state = self._states.get(server_name) or self.register_server(server_name, cfg)
+            count = await self._connect_single_server(server_name, cfg, state)
+            return count > 0
+
+    def _unregister_server_tools(self, server_name: str) -> None:
+        for name in self._server_tool_names.pop(server_name, []):
+            self._registry.unregister(name)
+
     def mark_disconnected(self) -> None:
         for state in self._states.values():
             state.tool_count = 0
             state.next_retry_at = None
             state.status = "disconnected"
 
-    async def connect_servers(
-        self,
-        *,
-        mcp_servers: Mapping[str, object],
-        stack: AsyncExitStack,
-    ) -> int:
-        """
-        Connect MCP servers and register their tools.
+    async def close(self) -> None:
+        """Close all MCP connections and mark servers disconnected."""
+        for server_name in list(self._server_stacks):
+            stack = self._server_stacks.pop(server_name, None)
+            if stack:
+                try:
+                    await stack.aclose()
+                except Exception as exc:
+                    logger.warning(
+                        "MCP server '{}' stack close raised: {}",
+                        server_name,
+                        format_exception(exc),
+                    )
+        self._sessions.clear()
+        self.mark_disconnected()
+
+    async def connect_servers(self, servers: dict[str, MCPServerConfig]) -> int:
+        """Connect MCP servers and register their tools.
+
+        Each server gets its own ``AsyncExitStack``.  Call :meth:`close` to
+        tear down all connections.
 
         Returns:
             Total number of tools registered.
         """
-        try:
-            from mcp import ClientSession, StdioServerParameters
-            from mcp.client.sse import sse_client
-            from mcp.client.stdio import stdio_client
-            from mcp.client.streamable_http import streamable_http_client
-        except Exception as exc:
-            raise RuntimeError(
-                "MCP support requires python package 'mcp'. Please install dependencies."
-            ) from exc
+        registered = 0
+        for server_name, cfg in servers.items():
+            self._configs[server_name] = cfg
+            state = self.register_server(server_name, cfg)
+            registered += await self._connect_single_server(server_name, cfg, state)
+
+        return registered
+
+    async def _connect_single_server(
+        self,
+        server_name: str,
+        cfg: MCPServerConfig,
+        state: MCPServerState,
+    ) -> int:
+        """Connect one MCP server with retries. Returns number of tools registered."""
+        from mcp import ClientSession as _ClientSession
 
         # Delay import to avoid module cycle at import time.
         from agent.common.tools.mcp import MCPToolWrapper
 
-        registered = 0
-        for server_name, raw_cfg in mcp_servers.items():
-            cfg = self._coerce_server_config(raw_cfg)
-            state = self.register_server(server_name, cfg)
-            self.set_status(server_name, "connecting")
+        self.set_status(server_name, "connecting")
 
-            attempts = state.max_retries + 1
-            attempt = 0
-            delay_ms = state.retry_initial_ms
-            connected = False
+        if not cfg.command and not cfg.url:
+            state.last_error = "missing command/url"
+            state.tool_count = 0
+            self.set_status(server_name, "failed")
+            logger.warning("MCP server '{}' has no command/url, skipped", server_name)
+            return 0
 
-            while attempt < attempts and not connected:
-                attempt += 1
-                attempt_stack = AsyncExitStack()
-                _ = await attempt_stack.__aenter__()
-                attempt_ok = False
-                try:
-                    if cfg.command:
-                        params = StdioServerParameters(
-                            command=cfg.command,
-                            args=cfg.args or [],
-                            env=cfg.env or None,
-                        )
-                        read, write = await asyncio.wait_for(
-                            attempt_stack.enter_async_context(stdio_client(params)),
-                            timeout=state.connect_timeout_ms / 1000,
-                        )
-                    elif cfg.url:
-                        remote_url = str(cfg.url)
-                        headers = cfg.headers or None
-                        read = None
-                        write = None
-                        transport_errors: list[BaseException] = []
-                        transport_order = (
-                            ["sse", "streamable_http"]
-                            if remote_url.rstrip("/").endswith("/sse")
-                            else ["streamable_http", "sse"]
-                        )
+        attempts = state.max_retries + 1
+        delay_ms = state.retry_initial_ms
+        timeout_sec = state.connect_timeout_ms / 1000
 
-                        for transport_mode in transport_order:
-                            try:
-                                if transport_mode == "streamable_http":
-                                    if headers:
-                                        http_client = await attempt_stack.enter_async_context(
-                                            httpx.AsyncClient(
-                                                headers=headers,
-                                                follow_redirects=True,
-                                            )
-                                        )
-                                        read, write, _ = await asyncio.wait_for(
-                                            attempt_stack.enter_async_context(
-                                                streamable_http_client(
-                                                    remote_url,
-                                                    http_client=http_client,
-                                                )
-                                            ),
-                                            timeout=state.connect_timeout_ms / 1000,
-                                        )
-                                    else:
-                                        read, write, _ = await asyncio.wait_for(
-                                            attempt_stack.enter_async_context(
-                                                streamable_http_client(remote_url)
-                                            ),
-                                            timeout=state.connect_timeout_ms / 1000,
-                                        )
-                                else:
-                                    read, write = await asyncio.wait_for(
-                                        attempt_stack.enter_async_context(
-                                            sse_client(remote_url, headers=headers)
-                                        ),
-                                        timeout=state.connect_timeout_ms / 1000,
-                                    )
+        for attempt in range(1, attempts + 1):
+            attempt_stack = AsyncExitStack()
+            _ = await attempt_stack.__aenter__()
+            attempt_ok = False
+            try:
+                read, write = await self._open_transport(cfg, attempt_stack, timeout_sec)
 
-                                logger.info(
-                                    "MCP server '{}' selected transport '{}'",
-                                    server_name,
-                                    transport_mode,
-                                )
-                                break
-                            except Exception as transport_exc:
-                                transport_errors.append(transport_exc)
-                                read = None
-                                write = None
+                session = await asyncio.wait_for(
+                    attempt_stack.enter_async_context(_ClientSession(read, write)),
+                    timeout=timeout_sec,
+                )
+                _ = await asyncio.wait_for(session.initialize(), timeout=timeout_sec)
+                listed = await asyncio.wait_for(session.list_tools(), timeout=timeout_sec)
 
-                        if read is None or write is None:
-                            if transport_errors:
-                                if len(transport_errors) == 1:
-                                    raise transport_errors[0]
-                                raise ExceptionGroup(
-                                    f"remote transport attempts failed for {remote_url}",
-                                    [e for e in transport_errors if isinstance(e, Exception)],
-                                )
-                            raise RuntimeError(
-                                f"failed to create remote transport for {remote_url}"
-                            )
-                    else:
-                        state.last_error = "missing command/url"
-                        state.tool_count = 0
-                        self.set_status(server_name, "failed")
-                        logger.warning(
-                            "MCP server '{}' has no command/url, skipped",
-                            server_name,
-                        )
-                        break
-
-                    session = await asyncio.wait_for(
-                        attempt_stack.enter_async_context(ClientSession(read, write)),
-                        timeout=state.connect_timeout_ms / 1000,
+                tool_names: list[str] = []
+                for tool_def in listed.tools:
+                    wrapper = MCPToolWrapper(
+                        server_name=server_name,
+                        tool_def=tool_def,
+                        timeout=state.tool_timeout_sec,
+                        manager=self,
                     )
-                    _ = await asyncio.wait_for(
-                        session.initialize(),
-                        timeout=state.connect_timeout_ms / 1000,
-                    )
-                    listed = await asyncio.wait_for(
-                        session.list_tools(),
-                        timeout=state.connect_timeout_ms / 1000,
-                    )
+                    self._registry.register(wrapper)
+                    tool_names.append(wrapper.name)
 
-                    for tool_def in listed.tools:
-                        wrapper = MCPToolWrapper(
-                            session=session,
-                            server_name=server_name,
-                            tool_def=tool_def,
-                            timeout=state.tool_timeout_sec,
-                            manager=self,
-                        )
-                        self._registry.register(wrapper)
-                        registered += 1
+                state.tool_count = len(listed.tools)
+                state.last_error = None
+                state.consecutive_failures = 0
+                state.last_connected_at = time.time()
+                state.next_retry_at = None
+                self.set_status(server_name, "connected")
+                logger.info(
+                    "MCP server '{}' connected, registered {} tools",
+                    server_name,
+                    state.tool_count,
+                )
+                committed_stack = attempt_stack.pop_all()
+                self._sessions[server_name] = session
+                self._server_stacks[server_name] = committed_stack
+                self._server_tool_names[server_name] = tool_names
+                attempt_ok = True
+                return state.tool_count
 
-                    state.tool_count = len(listed.tools)
-                    state.last_error = None
-                    state.consecutive_failures = 0
-                    state.last_connected_at = time.time()
-                    state.next_retry_at = None
-                    self.set_status(server_name, "connected")
-                    logger.info(
-                        "MCP server '{}' connected, registered {} tools",
-                        server_name,
-                        state.tool_count,
-                    )
-                    committed_stack = attempt_stack.pop_all()
-                    _ = stack.push_async_callback(committed_stack.aclose)
-                    attempt_ok = True
-                    connected = True
-                except Exception as exc:
-                    state.last_error = _format_exception(exc)
-                    if attempt >= attempts:
-                        state.tool_count = 0
-                        self.set_status(server_name, "failed")
-                        logger.error(
-                            "MCP server '{}' connect failed after {}/{} attempts: {}",
-                            server_name,
-                            attempt,
-                            attempts,
-                            state.last_error,
-                        )
-                        break
-
-                    wait_ms = min(delay_ms, state.retry_max_ms)
-                    jitter_ms = int(wait_ms * 0.2 * random.random())
-                    total_wait_ms = wait_ms + jitter_ms
-                    state.next_retry_at = time.time() + (total_wait_ms / 1000)
-                    logger.warning(
-                        "MCP server '{}' connect attempt {}/{} failed: {}. retry in {}ms",
+            except Exception as exc:
+                state.last_error = format_exception(exc)
+                if attempt >= attempts:
+                    state.tool_count = 0
+                    self.set_status(server_name, "failed")
+                    logger.error(
+                        "MCP server '{}' connect failed after {}/{} attempts: {}",
                         server_name,
                         attempt,
                         attempts,
                         state.last_error,
-                        total_wait_ms,
                     )
-                    await asyncio.sleep(total_wait_ms / 1000)
-                    delay_ms = min(delay_ms * 2, state.retry_max_ms)
-                finally:
-                    if not attempt_ok:
-                        try:
-                            await attempt_stack.aclose()
-                        except Exception as close_exc:
-                            logger.warning(
-                                "MCP server '{}' cleanup after failed attempt raised: {}",
-                                server_name,
-                                _format_exception(close_exc),
-                            )
+                    return 0
 
-        return registered
+                wait_ms = min(delay_ms, state.retry_max_ms)
+                jitter_ms = int(wait_ms * 0.2 * random.random())
+                total_wait_ms = wait_ms + jitter_ms
+                state.next_retry_at = time.time() + (total_wait_ms / 1000)
+                logger.warning(
+                    "MCP server '{}' connect attempt {}/{} failed: {}. retry in {}ms",
+                    server_name,
+                    attempt,
+                    attempts,
+                    state.last_error,
+                    total_wait_ms,
+                )
+                await asyncio.sleep(total_wait_ms / 1000)
+                delay_ms = min(delay_ms * 2, state.retry_max_ms)
+            finally:
+                if not attempt_ok:
+                    try:
+                        await attempt_stack.aclose()
+                    except Exception as close_exc:
+                        logger.warning(
+                            "MCP server '{}' cleanup after failed attempt raised: {}",
+                            server_name,
+                            format_exception(close_exc),
+                        )
+        return 0
+
+    @staticmethod
+    async def _open_transport(
+        cfg: MCPServerConfig,
+        stack: AsyncExitStack,
+        timeout_sec: float,
+    ) -> tuple[_ReadStream, _WriteStream]:
+        """Open stdio or remote transport. Returns ``(read_stream, write_stream)``."""
+        from mcp import StdioServerParameters
+        from mcp.client.sse import sse_client
+        from mcp.client.stdio import stdio_client
+        from mcp.client.streamable_http import streamable_http_client
+
+        if cfg.command:
+            params = StdioServerParameters(
+                command=cfg.command,
+                args=cfg.args or [],
+                env=cfg.env or None,
+            )
+            return await asyncio.wait_for(
+                stack.enter_async_context(stdio_client(params)),
+                timeout=timeout_sec,
+            )
+
+        # Remote transport: try streamable_http first, fall back to SSE.
+        remote_url = str(cfg.url)
+        headers = cfg.headers or None
+        transport_order = (
+            ["sse", "streamable_http"]
+            if remote_url.rstrip("/").endswith("/sse")
+            else ["streamable_http", "sse"]
+        )
+        transport_errors: list[Exception] = []
+
+        for mode in transport_order:
+            try:
+                if mode == "streamable_http":
+                    if headers:
+                        http_client = await stack.enter_async_context(
+                            httpx.AsyncClient(headers=headers, follow_redirects=True)
+                        )
+                        read, write, _ = await asyncio.wait_for(
+                            stack.enter_async_context(
+                                streamable_http_client(remote_url, http_client=http_client)
+                            ),
+                            timeout=timeout_sec,
+                        )
+                    else:
+                        read, write, _ = await asyncio.wait_for(
+                            stack.enter_async_context(streamable_http_client(remote_url)),
+                            timeout=timeout_sec,
+                        )
+                else:
+                    read, write = await asyncio.wait_for(
+                        stack.enter_async_context(sse_client(remote_url, headers=headers)),
+                        timeout=timeout_sec,
+                    )
+
+                logger.info("MCP remote transport selected: '{}'", mode)
+                return read, write
+            except Exception as exc:
+                transport_errors.append(exc)
+
+        if len(transport_errors) == 1:
+            raise transport_errors[0]
+        raise ExceptionGroup(
+            f"remote transport attempts failed for {remote_url}",
+            transport_errors,
+        )

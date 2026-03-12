@@ -52,7 +52,13 @@ class ExecTool(Tool):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout_bytes, stderr_bytes = await proc.communicate()
+        try:
+            stdout_bytes, stderr_bytes = await proc.communicate()
+        except asyncio.CancelledError:
+            # 外层 wait_for 超时会取消此协程，确保子进程被终止
+            proc.kill()
+            _ = await proc.wait()
+            raise
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")
 

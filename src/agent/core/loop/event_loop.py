@@ -17,7 +17,6 @@ from agent.core.compression import CompactionPayload
 from agent.core.llm import AdapterRegistry
 from agent.core.loop.llm_turn_handler import LLMTurnHandler
 from agent.core.message import ToolPart
-from agent.core.runtime import StrategyKind
 from agent.core.session import SessionManager
 from agent.types import (
     ContextBudget,
@@ -242,6 +241,17 @@ class AgentEventLoop:
 
         except Exception:
             await self.session_manager.update_state(session_id, SessionState.ERROR)
+            # 关闭未完成的 assistant message，避免下次复用半成品消息
+            try:
+                err_ctx = await self.session_manager.get_session(session_id)
+                if err_ctx.current_message:
+                    await self.session_manager.finish_assistant_message(
+                        session_id=session_id,
+                        tokens=TokenUsage(),
+                        finish="error",
+                    )
+            except Exception:
+                pass
             raise
 
         finally:
@@ -278,7 +288,7 @@ class AgentEventLoop:
                 Event(
                     type=EventType.PART_CREATED,
                     session_id=session_id,
-                    data=tool_part.to_event_payload(),
+                    data=tool_part.model_dump(),
                 )
             )
 
@@ -300,15 +310,14 @@ class AgentEventLoop:
 
             original_part = tool_parts_map[call_id]
             if result.success:
-                processed_result = await agent.context.strategy_manager.run(
-                    StrategyKind.TOOL_RESULT_POSTPROCESS,
+                processed_result = await agent.context.strategy_manager.run_postprocess(
                     agent_name=context.agent_name,
                     session_id=session_id,
                     tool_result=result,
                     tool_arguments=tool_args_by_call_id.get(call_id, {}),
                     storage=self.session_manager.storage,
                 )
-                updated_part = original_part.update_to_completed(cast(ToolResult, processed_result))
+                updated_part = original_part.update_to_completed(processed_result)
             else:
                 updated_part = original_part.update_to_error(result)
 
@@ -322,7 +331,7 @@ class AgentEventLoop:
                 Event(
                     type=EventType.PART_CREATED,
                     session_id=session_id,
-                    data=updated_part.to_event_payload(),
+                    data=updated_part.model_dump(),
                 )
             )
 

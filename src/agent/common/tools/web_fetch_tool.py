@@ -10,6 +10,10 @@ from ._utils import truncate_text
 
 
 class WebFetchTool(Tool):
+    """
+    Fetch content from URL.
+    """
+
     def __init__(self, max_chars: int = 20000):
         self.max_chars: int = max_chars
 

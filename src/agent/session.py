@@ -8,6 +8,7 @@ from loguru import logger
 from .types import SessionState
 
 if TYPE_CHECKING:
+    from .core.message import Message
     from .core.session import SessionContext, SessionManager
     from .types import Event
 
@@ -36,7 +37,7 @@ class Session:
         return self._context.state
 
     @property
-    def messages(self):
+    def messages(self) -> list[Message]:
         """获取消息历史"""
         return self._context.messages
 

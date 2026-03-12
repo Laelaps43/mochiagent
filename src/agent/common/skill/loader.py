@@ -17,19 +17,20 @@ class Skill:
 
     A skill provides specialized knowledge and instructions that guide an agent's
     behavior for specific tasks. Skills are defined as Markdown files with YAML
-    frontmatter containing metadata.
+    frontmatter containing metadata. Content is read from disk on each render()
+    call to avoid caching large text in memory.
     """
 
-    __slots__: tuple[str, ...] = ("name", "description", "content", "location")
+    __slots__: tuple[str, ...] = ("name", "description", "location")
 
-    def __init__(self, name: str, description: str, content: str, location: Path) -> None:
+    def __init__(self, name: str, description: str, location: Path) -> None:
         self.name: str = name
         self.description: str = description
-        self.content: str = content
         self.location: Path = location
 
     def render(self, context: str = "") -> str:
-        content = self.content
+        """Read skill content from disk and optionally substitute $ARGUMENTS."""
+        content = frontmatter.load(str(self.location)).content
         if context and "$ARGUMENTS" in content:
             content = content.replace("$ARGUMENTS", context)
         return content
@@ -98,7 +99,6 @@ class SkillLoader:
             skill = Skill(
                 name=skill_name,
                 description=str(description or ""),
-                content=post.content,
                 location=skill_file,
             )
 
