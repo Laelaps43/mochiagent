@@ -8,8 +8,8 @@ from typing import cast
 from loguru import logger
 
 from agent.core.bus import MessageBus
-from agent.core.message import Message, Part, UserInput  # 移到顶层避免循环导入
-from agent.types import Event, EventType, SessionData, SessionMetadataData, SessionState, TokenUsage
+from agent.core.message import Message, Part, UserInput
+from agent.types import Event, EventType, SessionMetadataData, SessionState, TokenUsage
 from agent.core.storage import StorageProvider, MemoryStorage
 from .context import SessionContext
 from .state import SessionStateMachine
@@ -53,14 +53,16 @@ class SessionManager:
     async def _load_session_into_cache(
         self,
         session_id: str,
-        session_data: SessionMetadataData | SessionData,
+        session_data: SessionMetadataData,
     ) -> SessionContext:
         """将存储中的会话数据反序列化并加入缓存（调用方需持有 _cache_lock）"""
         context = SessionContext.from_snapshot(session_data)
 
-        messages_data = await self.storage.load_messages(session_id)
-        context.messages.extend(Message.model_validate(msg_data) for msg_data in messages_data)
-        logger.debug(f"Loaded {len(messages_data)} messages for session {session_id}")
+        messages = await self.storage.load_messages(
+            session_id, from_message_id=context.last_compaction_message_id
+        )
+        context.messages.extend(messages)
+        logger.debug(f"Loaded {len(messages)} messages for session {session_id}")
 
         state_machine = SessionStateMachine(
             session_id=session_id,
@@ -134,12 +136,13 @@ class SessionManager:
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        # 检查是否已存在
-        if session_id in self._cache:
-            raise ValueError(f"Session {session_id} already exists in cache")
+        # 在锁内检查是否已存在，避免 TOCTOU 竞态
+        async with self._cache_lock:
+            if session_id in self._cache:
+                raise ValueError(f"Session {session_id} already exists in cache")
 
-        if await self.storage.session_exists(session_id):
-            raise ValueError(f"Session {session_id} already exists in storage")
+            if await self.storage.session_exists(session_id):
+                raise ValueError(f"Session {session_id} already exists in storage")
 
         try:
             return await self._create_and_save_session(session_id, model_profile_id, agent_name)
@@ -287,7 +290,7 @@ class SessionManager:
         message = context.build_user_message(parts)
 
         # 自动保存消息
-        await self.storage.save_message(session_id, message.model_dump(mode="json"))
+        await self.storage.save_message(session_id, message)
 
         logger.debug(f"Added and saved user message: {message.info.id}")
         return message
@@ -329,7 +332,7 @@ class SessionManager:
 
         # 自动保存完成的消息
         if finished_message:
-            await self.storage.save_message(session_id, finished_message.model_dump(mode="json"))
+            await self.storage.save_message(session_id, finished_message)
             logger.debug(f"Finished and saved assistant message: {finished_message.info.id}")
 
     async def save_session_metadata(self, session_id: str) -> None:

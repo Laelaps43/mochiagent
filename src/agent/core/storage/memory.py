@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from agent.core.message import Message
 from agent.types import SessionMetadataData
 
 from .provider import (
@@ -37,7 +38,7 @@ class MemoryStorage(StorageProvider):
 
     def __init__(self, artifact_root: str | Path | None = None):
         self._sessions: dict[str, SessionMetadataData] = {}
-        self._messages: dict[str, list[dict[str, object]]] = {}
+        self._messages: dict[str, list[Message]] = {}
         self._artifact_root: Path = (
             Path(artifact_root) if artifact_root else (Path.cwd() / ".agent" / "artifacts")
         )
@@ -78,19 +79,26 @@ class MemoryStorage(StorageProvider):
         return list(self._sessions.keys())
 
     @override
-    async def save_message(self, session_id: str, message_data: dict[str, object]) -> None:
+    async def save_message(self, session_id: str, message: Message) -> None:
         if session_id not in self._messages:
             self._messages[session_id] = []
-        self._messages[session_id].append(message_data)
+        self._messages[session_id].append(message)
         logger.debug(
             f"Saved message to memory: {session_id}, total messages: {len(self._messages[session_id])}"
         )
 
     @override
-    async def load_messages(self, session_id: str) -> list[dict[str, object]]:
+    async def load_messages(
+        self, session_id: str, *, from_message_id: str | None = None
+    ) -> list[Message]:
         messages = self._messages.get(session_id, [])
+        if from_message_id is not None:
+            for idx, msg in enumerate(messages):
+                if msg.message_id == from_message_id:
+                    messages = messages[idx:]
+                    break
         logger.debug(f"Loaded {len(messages)} messages from memory: {session_id}")
-        return messages
+        return list(messages)
 
     @override
     async def delete_messages(self, session_id: str) -> None:

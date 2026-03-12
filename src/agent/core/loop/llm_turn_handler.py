@@ -16,17 +16,23 @@ from agent.core.llm.errors import (
     is_context_overflow_error as _is_context_overflow,
 )
 from agent.core.loop.turn_result import LLMTurnResult
-from agent.core.message import Message as InternalMessage, ReasoningPart, TextPart
+from agent.core.message import (
+    Message as InternalMessage,
+    CompactionMessageInfo,
+    ReasoningPart,
+    TextPart,
+    TimeInfo,
+)
 from agent.core.message.info import AssistantMessageInfo
-from agent.core.runtime import StrategyKind
 from agent.core.session import SessionManager
-from agent.core.utils import extract_turn_tokens
 from agent.types import (
     ContextBudget,
+    ContextBudgetSource,
     Event,
     EventType,
     LLMConfig,
     ProviderUsage,
+    TokenUsage,
     ToolCallPayload,
 )
 
@@ -81,7 +87,7 @@ class LLMTurnHandler:
         )
         compaction_events.append(pre_compaction)
         if pre_compaction.applied:
-            await self._persist_session_metadata(session_id)
+            await self._on_compaction_applied(context)
 
         # 复用已有的 assistant message（tool_calls 轮次），或创建新的
         if context.current_message and isinstance(
@@ -118,10 +124,11 @@ class LLMTurnHandler:
             finish_reason = None
             provider_usage = None
 
+            visible_messages = context.get_llm_messages()
             llm_messages = (
-                [InternalMessage.create_system(system_prompt)] + list(context.messages)
+                [InternalMessage.create_system(system_prompt)] + visible_messages
                 if system_prompt
-                else list(context.messages)
+                else visible_messages
             )
             logger.debug(f"Calling LLM for session {session_id}: messages={len(llm_messages)}")
 
@@ -148,19 +155,21 @@ class LLMTurnHandler:
 
                     if chunk.content:
                         if reasoning_buffer:
-                            reasoning_part = ReasoningPart.create_fast(
+                            reasoning_part = ReasoningPart(
                                 session_id=session_id,
                                 message_id=message_id,
                                 text=reasoning_buffer,
-                                start=reasoning_start_time or int(time.time() * 1000),
-                                end=int(time.time() * 1000),
+                                time=TimeInfo(
+                                    start=reasoning_start_time or int(time.time() * 1000),
+                                    end=int(time.time() * 1000),
+                                ),
                             )
                             context.add_part_to_current(reasoning_part)
                             await self._emit_event(
                                 Event(
                                     type=EventType.PART_CREATED,
                                     session_id=session_id,
-                                    data=reasoning_part.to_event_payload(),
+                                    data=reasoning_part.model_dump(),
                                 )
                             )
                             reasoning_buffer = ""
@@ -187,25 +196,27 @@ class LLMTurnHandler:
                         provider_usage = chunk.usage
 
                 if reasoning_buffer:
-                    reasoning_part = ReasoningPart.create_fast(
+                    reasoning_part = ReasoningPart(
                         session_id=session_id,
                         message_id=message_id,
                         text=reasoning_buffer,
-                        start=reasoning_start_time or int(time.time() * 1000),
-                        end=int(time.time() * 1000),
+                        time=TimeInfo(
+                            start=reasoning_start_time or int(time.time() * 1000),
+                            end=int(time.time() * 1000),
+                        ),
                     )
                     context.add_part_to_current(reasoning_part)
                     await self._emit_event(
                         Event(
                             type=EventType.PART_CREATED,
                             session_id=session_id,
-                            data=reasoning_part.to_event_payload(),
+                            data=reasoning_part.model_dump(),
                         )
                     )
 
                 # 流结束后，将累积的文本作为单个 TextPart 添加到消息
                 if text_buffer:
-                    final_text_part = TextPart.create_fast(
+                    final_text_part = TextPart(
                         session_id=session_id,
                         message_id=message_id,
                         text=text_buffer,
@@ -234,10 +245,19 @@ class LLMTurnHandler:
                     raise
                 if context.current_message:
                     context.current_message.parts = []
-                await self._persist_session_metadata(session_id)
+                await self._on_compaction_applied(context)
                 continue
 
-        turn_tokens, source = extract_turn_tokens(provider_usage)
+        if provider_usage:
+            turn_tokens = TokenUsage(
+                input=provider_usage.input_tokens,
+                output=provider_usage.output_tokens,
+                reasoning=provider_usage.reasoning_tokens,
+            )
+            source: ContextBudgetSource = "provider"
+        else:
+            turn_tokens = TokenUsage()
+            source = "estimated"
         assistant_info = cast(AssistantMessageInfo, assistant_msg.info)
         assistant_info.tokens.input += turn_tokens.input
         assistant_info.tokens.output += turn_tokens.output
@@ -255,7 +275,7 @@ class LLMTurnHandler:
         last_compaction = (
             compaction_events[-1]
             if compaction_events
-            else CompactionPayload.invalid(stage=CompactionStage.PRE_CALL.value)
+            else CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)
         )
         return LLMTurnResult(
             content=text_buffer,
@@ -295,6 +315,19 @@ class LLMTurnHandler:
     async def _persist_session_metadata(self, session_id: str) -> None:
         await self.session_manager.save_session_metadata(session_id)
 
+    async def _on_compaction_applied(self, context: SessionContext) -> None:
+        """压缩成功后：持久化书签 + 回写元数据。事件已在 compactor.run() 中发射。"""
+        session_id = context.session_id
+
+        # 持久化书签消息
+        for msg in reversed(context.messages):
+            if isinstance(msg.info, CompactionMessageInfo):
+                await self.session_manager.storage.save_message(session_id, msg)
+                break
+
+        # 回写元数据（含 last_compaction_message_id）
+        await self._persist_session_metadata(session_id)
+
     async def _run_context_compaction(
         self,
         *,
@@ -306,8 +339,7 @@ class LLMTurnHandler:
         stage: CompactionStage,
         error: str | None = None,
     ) -> CompactionPayload:
-        result = await strategy_manager.run(
-            StrategyKind.CONTEXT_COMPACTION,
+        return await strategy_manager.run_compaction(
             session_context=context,
             budget=budget,
             llm_config=llm_config,
@@ -315,7 +347,5 @@ class LLMTurnHandler:
             agent_name=context.agent_name,
             stage=stage,
             error=error,
+            emit_event=self._emit_event,
         )
-        if isinstance(result, CompactionPayload):
-            return result
-        return CompactionPayload.invalid(stage=stage.value)

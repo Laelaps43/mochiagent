@@ -66,8 +66,9 @@ class LLMProvider(ABC):
             if not text_contents and not tool_calls:
                 continue
 
+            role = msg.info.role if msg.info.role != "compaction" else "user"
             main_msg: dict[str, object] = {
-                "role": msg.info.role,
+                "role": role,
                 "content": "".join(text_contents),
             }
             if msg.info.role == "assistant" and tool_calls:
@@ -76,6 +77,21 @@ class LLMProvider(ABC):
             result.extend(tool_results)
 
         return result
+
+    @staticmethod
+    def prepare_tools(tools: list[ToolDefinition]) -> list[dict[str, object]]:
+        """将 ToolDefinition 列表转换为 OpenAI function-calling 格式。"""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                },
+            }
+            for tool in tools
+        ]
 
     @abstractmethod
     def stream_chat(

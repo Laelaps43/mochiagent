@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field
 
+from agent.core.message import Message
 from agent.types import SessionMetadataData
 
 
@@ -112,26 +113,29 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def save_message(self, session_id: str, message_data: dict[str, object]) -> None:
+    async def save_message(self, session_id: str, message: Message) -> None:
         """
         保存单条消息（增量保存）
 
         Args:
             session_id: 会话 ID
-            message_data: 消息数据字典（来自 Message.to_dict()）
+            message: Message 领域对象，序列化策略由实现方决定
         """
         pass
 
     @abstractmethod
-    async def load_messages(self, session_id: str) -> list[dict[str, object]]:
+    async def load_messages(
+        self, session_id: str, *, from_message_id: str | None = None
+    ) -> list[Message]:
         """
-        加载会话的所有消息
+        加载会话消息。
 
         Args:
             session_id: 会话 ID
+            from_message_id: 若提供，只返回该消息（含）之后的消息；否则返回全部。
 
         Returns:
-            消息数据字典列表
+            Message 对象列表
         """
         pass
 

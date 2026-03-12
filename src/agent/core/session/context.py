@@ -4,8 +4,6 @@ Session Context - 会话上下文管理
 
 import time
 from datetime import datetime, timezone
-from uuid import uuid4
-
 from loguru import logger
 
 from agent.types import (
@@ -16,11 +14,12 @@ from agent.types import (
     SessionState,
     TokenUsage,
 )
-from agent.constants import UUID_PREFIX_LENGTH
+from agent.core.utils import gen_id
 from agent.core.message import (
     Message,
     UserMessageInfo,
     AssistantMessageInfo,
+    CompactionMessageInfo,
     Part,
     UserInput,
 )
@@ -54,11 +53,12 @@ class SessionContext:
         self.context_budget: ContextBudget = ContextBudget()
         self.messages: list[Message] = []
         self.current_message: Message | None = None
+        self.last_compaction_message_id: str | None = None
         self.created_at: datetime = datetime.now(tz=timezone.utc)
         self.updated_at: datetime = datetime.now(tz=timezone.utc)
 
     def build_user_message(self, parts: list[UserInput]) -> Message:
-        message_id = f"msg_{uuid4().hex[:UUID_PREFIX_LENGTH]}"
+        message_id = gen_id("msg_")
         message = Message(
             info=UserMessageInfo(
                 id=message_id,
@@ -79,7 +79,7 @@ class SessionContext:
         provider_id: str,
         model_id: str,
     ) -> Message:
-        message_id = f"msg_{uuid4().hex[:UUID_PREFIX_LENGTH]}"
+        message_id = gen_id("msg_")
         message = Message(
             info=AssistantMessageInfo(
                 id=message_id,
@@ -96,6 +96,23 @@ class SessionContext:
         self.current_message = message
         self.updated_at = datetime.now(tz=timezone.utc)
         return message
+
+    def get_llm_messages(self) -> list[Message]:
+        """返回 LLM 可见的消息视图。
+
+        有 compaction 书签时返回 [书签(含摘要)] + 书签之后的原始消息，否则返回全部。
+        书签的 role="compaction" 由 LLMProvider.prepare_messages 映射为 "user"。
+        """
+        idx = self._find_last_compaction_index()
+        if idx is None:
+            return list(self.messages)
+        return list(self.messages[idx:])
+
+    def _find_last_compaction_index(self) -> int | None:
+        for idx in range(len(self.messages) - 1, -1, -1):
+            if isinstance(self.messages[idx].info, CompactionMessageInfo):
+                return idx
+        return None
 
     def add_part_to_current(self, part: Part) -> None:
         if self.current_message:
@@ -143,7 +160,7 @@ class SessionContext:
         reasoning_tokens: int,
         source: ContextBudgetSource,
     ) -> ContextBudget:
-        _ = self.context_budget.update(
+        self.context_budget.update(
             total_tokens=total_tokens,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -162,6 +179,7 @@ class SessionContext:
             model_profile_id=self.model_profile_id or "",
             agent_name=self.agent_name,
             context_budget=self.context_budget,
+            last_compaction_message_id=self.last_compaction_message_id,
             created_at=self.created_at.isoformat(),
             updated_at=self.updated_at.isoformat(),
         )
@@ -182,19 +200,16 @@ class SessionContext:
         )
 
     @classmethod
-    def from_snapshot(cls, data: SessionMetadataData | SessionData) -> "SessionContext":
+    def from_snapshot(cls, data: SessionMetadataData) -> "SessionContext":
         context = cls(
             session_id=data.session_id,
             model_profile_id=data.model_profile_id or "",
             agent_name=data.agent_name,
         )
-        context.context_budget = ContextBudget.from_dict(data.context_budget)
+        context.context_budget = data.context_budget
+        context.last_compaction_message_id = data.last_compaction_message_id
         context.state = SessionState(data.state)
         context.created_at = datetime.fromisoformat(data.created_at)
         context.updated_at = datetime.fromisoformat(data.updated_at)
-
-        # 如果是 SessionData（包含 messages）
-        if isinstance(data, SessionData):
-            context.messages.extend(Message.model_validate(msg_data) for msg_data in data.messages)
 
         return context

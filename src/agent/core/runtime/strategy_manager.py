@@ -2,57 +2,75 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Generic, TypeVar, cast
 
-from .context_compaction_manager import ContextCompactionManager
+from loguru import logger
+
 from .strategy_kind import StrategyKind
-from .tool_postprocess_manager import ToolPostprocessManager
 
-from agent.core.compression import CompactorFactory
-from agent.core.tools import ToolResultPostProcessorFactory
+from agent.core.compression import (
+    CompactionPayload,
+    CompactionStage,
+    CompactorRunOptions,
+    ContextCompactor,
+    DefaultContextCompactor,
+)
+from agent.core.tools import (
+    ToolResultPostProcessor,
+    ToolResultPostProcessorStrategy,
+)
 
 if TYPE_CHECKING:
-    from agent.core.compression import CompactionStage
+    from collections.abc import Awaitable, Callable
+
     from agent.core.llm.base import LLMProvider
     from agent.core.session.context import SessionContext
     from agent.core.storage import StorageProvider
-    from agent.types import ContextBudget, LLMConfig, ToolResult
+    from agent.types import ContextBudget, Event, LLMConfig, ToolResult
+
+S = TypeVar("S")
+
+
+class StrategySlot(Generic[S]):
+    """Per-agent strategy override with a shared default."""
+
+    def __init__(self, default: S) -> None:
+        self._default: S = default
+        self._agents: dict[str, S] = {}
+
+    def set(self, agent_name: str, strategy: S) -> None:
+        self._agents[agent_name.strip()] = strategy
+
+    def get(self, agent_name: str | None = None) -> S:
+        if agent_name and agent_name in self._agents:
+            return self._agents[agent_name]
+        return self._default
 
 
 class AgentStrategyManager:
     def __init__(self) -> None:
-        self._compaction: ContextCompactionManager = ContextCompactionManager()
-        self._postprocess: ToolPostprocessManager = ToolPostprocessManager()
+        self._compaction: StrategySlot[ContextCompactor] = StrategySlot(DefaultContextCompactor())
+        self._postprocess: StrategySlot[ToolResultPostProcessorStrategy] = StrategySlot(
+            ToolResultPostProcessor()
+        )
+        self._compaction_options: dict[str, CompactorRunOptions] = {}
 
-    def register_compaction(self, name: str, factory: CompactorFactory) -> None:
-        self._compaction.register(name, factory)
-
-    def register_postprocess(self, name: str, factory: ToolResultPostProcessorFactory) -> None:
-        self._postprocess.register(name, factory)
-
-    def register(self, kind: StrategyKind, name: str, factory: Callable[..., object]) -> None:
-        if kind == StrategyKind.CONTEXT_COMPACTION:
-            self._compaction.register(name, cast(CompactorFactory, factory))
-        else:
-            self._postprocess.register(name, cast(ToolResultPostProcessorFactory, factory))
-
-    def list(self, kind: StrategyKind) -> list[str]:
-        if kind == StrategyKind.CONTEXT_COMPACTION:
-            return self._compaction.list()
-        return self._postprocess.list()
-
-    def set_agent(
+    def set(
         self,
         kind: StrategyKind,
         agent_name: str,
-        name: str,
-        options: Mapping[str, object] | None = None,
+        strategy: object,
+        *,
+        compaction_options: CompactorRunOptions | None = None,
     ) -> None:
+        """Set a per-agent strategy instance by kind."""
         if kind == StrategyKind.CONTEXT_COMPACTION:
-            self._compaction.set_agent(agent_name, name, options)
-        else:
-            self._postprocess.set_agent(agent_name, name, options)
+            self._compaction.set(agent_name, cast(ContextCompactor, strategy))
+            if compaction_options:
+                self._compaction_options[agent_name.strip()] = compaction_options
+        elif kind == StrategyKind.TOOL_RESULT_POSTPROCESS:
+            self._postprocess.set(agent_name, cast(ToolResultPostProcessorStrategy, strategy))
 
     async def run_compaction(
         self,
@@ -63,16 +81,23 @@ class AgentStrategyManager:
         llm_provider: LLMProvider,
         agent_name: str | None = None,
         stage: CompactionStage,
-        error: str | None = None,
-    ) -> object:
-        return await self._compaction.run(
+        error: str | None = None,  # noqa: ARG002
+        emit_event: Callable[[Event], Awaitable[None]] | None = None,
+    ) -> CompactionPayload:
+        _ = error  # reserved for future per-stage error context
+        compactor = self._compaction.get(agent_name)
+        options = (
+            self._compaction_options.get(agent_name) if agent_name else None
+        ) or CompactorRunOptions()
+
+        return await compactor.run(
             session_context=session_context,
             budget=budget,
             llm_config=llm_config,
             llm_provider=llm_provider,
-            agent_name=agent_name,
             stage=stage,
-            error=error,
+            options=options,
+            emit_event=emit_event,
         )
 
     async def run_postprocess(
@@ -83,34 +108,18 @@ class AgentStrategyManager:
         tool_result: ToolResult,
         tool_arguments: Mapping[str, object],
         storage: StorageProvider,
-    ) -> object:
-        return await self._postprocess.run(
-            agent_name=agent_name,
-            session_id=session_id,
-            tool_result=tool_result,
-            tool_arguments=tool_arguments,
-            storage=storage,
-        )
-
-    async def run(
-        self,
-        kind: StrategyKind,
-        **kwargs: object,
-    ) -> object:
-        if kind == StrategyKind.CONTEXT_COMPACTION:
-            return await self.run_compaction(
-                session_context=cast("SessionContext", kwargs["session_context"]),
-                budget=cast("ContextBudget", kwargs["budget"]),
-                llm_config=cast("LLMConfig", kwargs["llm_config"]),
-                llm_provider=cast("LLMProvider", kwargs["llm_provider"]),
-                agent_name=cast("str | None", kwargs.get("agent_name")),
-                stage=cast("CompactionStage", kwargs["stage"]),
-                error=cast("str | None", kwargs.get("error")),
+    ) -> ToolResult:
+        processor = self._postprocess.get(agent_name)
+        try:
+            return await processor.process(
+                session_id=session_id,
+                tool_result=tool_result,
+                tool_arguments=tool_arguments,
+                storage=storage,
             )
-        return await self.run_postprocess(
-            agent_name=cast("str | None", kwargs.get("agent_name")),
-            session_id=cast("str", kwargs["session_id"]),
-            tool_result=cast("ToolResult", kwargs["tool_result"]),
-            tool_arguments=cast("Mapping[str, object]", kwargs["tool_arguments"]),
-            storage=cast("StorageProvider", kwargs["storage"]),
-        )
+        except Exception as exc:
+            logger.exception(
+                "Tool result postprocessor failed: {}",
+                exc,
+            )
+            return tool_result
