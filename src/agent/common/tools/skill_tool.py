@@ -8,7 +8,7 @@ its description based on available skills.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, override
 
 from ...core.tools import Tool
 
@@ -35,7 +35,7 @@ class SkillTool(Tool):
         - Supports optional context parameter for skill customization
     """
 
-    def __init__(self, skills: Dict[str, Skill]):
+    def __init__(self, skills: dict[str, Skill]):
         """
         Initialize the skill tool with available skills.
 
@@ -43,13 +43,15 @@ class SkillTool(Tool):
             skills: Dictionary mapping skill names to Skill objects.
                     These are the skills registered by the agent.
         """
-        self._skills = skills
+        self._skills: dict[str, Skill] = skills
 
     @property
+    @override
     def name(self) -> str:
         return "skill"
 
     @property
+    @override
     def description(self) -> str:
         if not self._skills:
             return "No skills available."
@@ -76,7 +78,8 @@ class SkillTool(Tool):
         return "\n".join(desc_lines)
 
     @property
-    def parameters_schema(self) -> Dict[str, Any]:
+    @override
+    def parameters_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
@@ -92,7 +95,8 @@ class SkillTool(Tool):
             "required": ["name"],
         }
 
-    async def execute(self, name: str, context: str = "", **kwargs) -> str:
+    @override
+    async def execute(self, name: str = "", context: str = "", **kwargs: object) -> object:
         if name not in self._skills:
             available = ", ".join(self._skills.keys())
             return f"Error: Skill '{name}' not found. Available skills: {available or 'none'}"

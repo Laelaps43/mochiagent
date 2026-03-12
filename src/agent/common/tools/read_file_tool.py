@@ -1,22 +1,25 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import override
 
 from agent.core.tools import Tool
 
 
 class ReadFileTool(Tool):
     @property
+    @override
     def name(self) -> str:
         return "read_file"
 
     @property
+    @override
     def description(self) -> str:
         return "Read file content from disk."
 
     @property
-    def parameters_schema(self) -> Dict[str, Any]:
+    @override
+    def parameters_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
@@ -37,14 +40,16 @@ class ReadFileTool(Tool):
             "required": ["path"],
         }
 
+    @override
     async def execute(
         self,
-        path: str,
+        path: str = "",
         encoding: str = "utf-8",
         max_chars: int = 100000,
         offset: int = 0,
         limit: int | None = None,
-    ) -> Any:
+        **kwargs: object,
+    ) -> object:
         file_path = Path(path)
         if not file_path.exists():
             return {"success": False, "error": f"File not found: {path}"}

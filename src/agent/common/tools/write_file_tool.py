@@ -1,22 +1,25 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import override
 
 from agent.core.tools import Tool
 
 
 class WriteFileTool(Tool):
     @property
+    @override
     def name(self) -> str:
         return "write_file"
 
     @property
+    @override
     def description(self) -> str:
         return "Write content to a file."
 
     @property
-    def parameters_schema(self) -> Dict[str, Any]:
+    @override
+    def parameters_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
@@ -32,18 +35,20 @@ class WriteFileTool(Tool):
             "required": ["path", "content"],
         }
 
+    @override
     async def execute(
         self,
-        path: str,
-        content: str,
+        path: str = "",
+        content: str = "",
         append: bool = False,
         encoding: str = "utf-8",
-    ) -> Any:
+        **kwargs: object,
+    ) -> object:
         file_path = Path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         mode = "a" if append else "w"
         with file_path.open(mode, encoding=encoding) as f:
-            f.write(content)
+            _ = f.write(content)
         return {
             "success": True,
             "path": str(file_path),

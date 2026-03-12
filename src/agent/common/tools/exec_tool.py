@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict
+from typing import override
 
 from agent.core.tools import Tool
 
@@ -10,18 +10,21 @@ from ._utils import truncate_text
 
 class ExecTool(Tool):
     def __init__(self, max_output_chars: int = 20000):
-        self.max_output_chars = max_output_chars
+        self.max_output_chars: int = max_output_chars
 
     @property
+    @override
     def name(self) -> str:
         return "exec"
 
     @property
+    @override
     def description(self) -> str:
         return "Execute shell command."
 
     @property
-    def parameters_schema(self) -> Dict[str, Any]:
+    @override
+    def parameters_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
@@ -39,7 +42,10 @@ class ExecTool(Tool):
             "required": ["command"],
         }
 
-    async def execute(self, command: str, workdir: str | None = None) -> Any:
+    @override
+    async def execute(
+        self, command: str = "", workdir: str | None = None, **kwargs: object
+    ) -> object:
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=workdir,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import override
 
 import httpx
 
@@ -11,18 +11,21 @@ from ._utils import truncate_text
 
 class WebFetchTool(Tool):
     def __init__(self, max_chars: int = 20000):
-        self.max_chars = max_chars
+        self.max_chars: int = max_chars
 
     @property
+    @override
     def name(self) -> str:
         return "web_fetch"
 
     @property
+    @override
     def description(self) -> str:
         return "Fetch content from URL."
 
     @property
-    def parameters_schema(self) -> Dict[str, Any]:
+    @override
+    def parameters_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
@@ -36,7 +39,8 @@ class WebFetchTool(Tool):
             "required": ["url"],
         }
 
-    async def execute(self, url: str, timeout: float = 20) -> Any:
+    @override
+    async def execute(self, url: str = "", timeout: float = 20, **kwargs: object) -> object:
         if not (url.startswith("http://") or url.startswith("https://")):
             return {"success": False, "error": "Only http/https URLs are supported"}
 

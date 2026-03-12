@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import cast, override
 
 from agent import (
     BaseAgent,
@@ -17,38 +18,46 @@ from agent import (
 
 class EchoTool(Tool):
     @property
+    @override
     def name(self) -> str:
         return "echo"
 
     @property
+    @override
     def description(self) -> str:
         return "Echo back input text."
 
     @property
-    def parameters_schema(self) -> dict:
+    @override
+    def parameters_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {"text": {"type": "string"}},
             "required": ["text"],
         }
 
-    async def execute(self, text: str):
+    @override
+    async def execute(self, text: str = "", **kwargs: object) -> object:
         return {"text": text}
 
 
 class DemoAgent(BaseAgent):
     @property
+    @override
     def name(self) -> str:
         return "demo_agent"
 
     @property
+    @override
     def description(self) -> str:
         return "Minimal demo agent."
 
     @property
+    @override
     def skill_directory(self) -> Path | None:
         return None
 
+    @override
     async def setup(self) -> None:
         self.register_tool(EchoTool())
 
@@ -103,7 +112,12 @@ async def run_once(prompt: str) -> None:
                 if part_type == "text":
                     print(data.get("text", ""), end="", flush=True)
                 elif part_type == "tool":
-                    state = (data.get("state") or {}).get("status")
+                    state_obj = data.get("state")
+                    state = (
+                        cast(dict[str, object], state_obj).get("status")
+                        if isinstance(state_obj, dict)
+                        else None
+                    )
                     tool_name = data.get("tool", "unknown")
                     print(f"\n[tool] {tool_name} -> {state}")
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from html import unescape
 import re
-from typing import Any, Dict
+from typing import cast, override
 
 import httpx
 
@@ -11,18 +11,21 @@ from agent.core.tools import Tool
 
 class WebSearchTool(Tool):
     def __init__(self, api_key: str = ""):
-        self.api_key = api_key
+        self.api_key: str = api_key
 
     @property
+    @override
     def name(self) -> str:
         return "web_search"
 
     @property
+    @override
     def description(self) -> str:
         return "Search the web and return top results."
 
     @property
-    def parameters_schema(self) -> Dict[str, Any]:
+    @override
+    def parameters_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
@@ -32,13 +35,14 @@ class WebSearchTool(Tool):
             "required": ["query"],
         }
 
-    async def execute(self, query: str, count: int = 5) -> Any:
+    @override
+    async def execute(self, query: str = "", count: int = 5, **kwargs: object) -> object:
         count = max(1, min(count, 20))
         if self.api_key:
             return await self._search_brave(query=query, count=count)
         return await self._search_duckduckgo(query=query, count=count)
 
-    async def _search_brave(self, query: str, count: int) -> Any:
+    async def _search_brave(self, query: str, count: int) -> object:
         headers = {
             "Accept": "application/json",
             "X-Subscription-Token": self.api_key,
@@ -55,13 +59,14 @@ class WebSearchTool(Tool):
                     "success": False,
                     "error": f"Brave search failed: HTTP {response.status_code}",
                 }
-            data = response.json()
-            items = data.get("web", {}).get("results", [])
-            results = [
+            data = cast(dict[str, object], response.json())
+            web_obj = cast(dict[str, object], data.get("web") or {})
+            items = cast(list[object], web_obj.get("results") or [])
+            results: list[dict[str, object]] = [
                 {
-                    "title": item.get("title", ""),
-                    "url": item.get("url", ""),
-                    "snippet": item.get("description", ""),
+                    "title": cast(str, cast(dict[str, object], item).get("title") or ""),
+                    "url": cast(str, cast(dict[str, object], item).get("url") or ""),
+                    "snippet": cast(str, cast(dict[str, object], item).get("description") or ""),
                 }
                 for item in items[:count]
             ]
@@ -72,7 +77,7 @@ class WebSearchTool(Tool):
                 "results": results,
             }
 
-    async def _search_duckduckgo(self, query: str, count: int) -> Any:
+    async def _search_duckduckgo(self, query: str, count: int) -> object:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(
                 "https://duckduckgo.com/html/",
@@ -90,7 +95,7 @@ class WebSearchTool(Tool):
                 r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
                 re.IGNORECASE | re.DOTALL,
             )
-            results = []
+            results: list[dict[str, object]] = []
             for match in pattern.finditer(html):
                 href = unescape(match.group(1))
                 title_raw = match.group(2)

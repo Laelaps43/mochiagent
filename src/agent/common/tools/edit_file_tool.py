@@ -1,22 +1,25 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import override
 
 from agent.core.tools import Tool
 
 
 class EditFileTool(Tool):
     @property
+    @override
     def name(self) -> str:
         return "edit_file"
 
     @property
+    @override
     def description(self) -> str:
         return "Edit file by replacing text or rewriting full content."
 
     @property
-    def parameters_schema(self) -> Dict[str, Any]:
+    @override
+    def parameters_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
@@ -38,15 +41,17 @@ class EditFileTool(Tool):
             "required": ["path"],
         }
 
+    @override
     async def execute(
         self,
-        path: str,
+        path: str = "",
         old_string: str | None = None,
         new_string: str | None = None,
         replace_all: bool = False,
         content: str | None = None,
         encoding: str = "utf-8",
-    ) -> Any:
+        **kwargs: object,
+    ) -> object:
         file_path = Path(path)
         if not file_path.exists():
             return {"success": False, "error": f"File not found: {path}"}
@@ -75,7 +80,7 @@ class EditFileTool(Tool):
             if replacements == 0:
                 return {"success": False, "error": "old_string not found in file"}
 
-        file_path.write_text(updated, encoding=encoding)
+        _ = file_path.write_text(updated, encoding=encoding)
         return {
             "success": True,
             "path": str(file_path),
