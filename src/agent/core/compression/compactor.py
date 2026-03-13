@@ -102,7 +102,7 @@ class ContextCompactor(ABC):
                     applied=False, reason="summary_failed", name=name, stage=stage_value
                 )
 
-            insert_idx = self._compute_bookmark_position(
+            insert_idx = self.compute_bookmark_position(
                 session_context.messages,
                 options.keep_user_tokens_budget,
                 options.chars_per_token,
@@ -180,7 +180,7 @@ class ContextCompactor(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _compute_bookmark_position(
+    def compute_bookmark_position(
         messages: list["Message"],
         keep_user_budget: int,
         chars_per_token: float,

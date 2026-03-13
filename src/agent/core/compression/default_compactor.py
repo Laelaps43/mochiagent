@@ -83,7 +83,7 @@ class DefaultContextCompactor(ContextCompactor):
 
         # Pre-call auto-compaction
         total_tokens = llm_config.context_window_tokens
-        used_tokens = self._estimate_tokens_from_messages(messages, options.chars_per_token)
+        used_tokens = self.estimate_tokens_from_messages(messages, options.chars_per_token)
         configured_limit = options.model_auto_compact_token_limit
 
         window_limit = None
@@ -191,7 +191,7 @@ class DefaultContextCompactor(ContextCompactor):
                 delay_s = (options.summary_retry_sleep_ms / 1000.0) * (2.0 ** (retries - 1))
                 await asyncio.sleep(min(delay_s, 30.0))
 
-    def _estimate_tokens_from_messages(
+    def estimate_tokens_from_messages(
         self,
         messages: Sequence[InternalMessage],
         chars_per_token: float,
