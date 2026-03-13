@@ -5,8 +5,6 @@ Tool Executor - 工具执行器
 import asyncio
 import json
 from pathlib import Path
-from typing import cast
-
 from jsonschema import ValidationError, validate as jsonschema_validate
 from loguru import logger
 
@@ -15,6 +13,7 @@ from .base import Tool
 from .registry import ToolRegistry
 from .security_guard import ToolSecurityConfig, ToolSecurityGuard
 from agent.common.tools._utils import set_workspace_root
+from typing import cast
 from agent.config.tools import ToolRuntimeConfig
 from agent.types import ToolCallPayload, ToolResult
 
@@ -86,7 +85,16 @@ class ToolExecutor:
         try:
             # 解析参数
             try:
-                arguments = cast(dict[str, object], json.loads(arguments_str))
+                parsed: object = json.loads(arguments_str)  # pyright: ignore[reportAny]
+                if not isinstance(parsed, dict):
+                    return ToolResult(
+                        tool_call_id=tool_call_id,
+                        tool_name=tool_name,
+                        result=None,
+                        error=f"Tool arguments must be a JSON object, got {type(parsed).__name__}",
+                        success=False,
+                    )
+                arguments = cast(dict[str, object], parsed)
             except json.JSONDecodeError as e:
                 logger.error("Failed to parse tool arguments: {}", e)
                 return ToolResult(
@@ -114,7 +122,10 @@ class ToolExecutor:
             decision = self.policy.evaluate(tool_name)
             if not decision.allowed:
                 logger.warning(
-                    f"Tool '{tool_name}' blocked by policy: {decision.reason} (call_id={tool_call_id})"
+                    "Tool '{}' blocked by policy: {} (call_id={})",
+                    tool_name,
+                    decision.reason,
+                    tool_call_id,
                 )
                 return ToolResult(
                     tool_call_id=tool_call_id,
@@ -141,7 +152,9 @@ class ToolExecutor:
             security_decision = self.security_guard.validate_tool_call(tool, arguments)
             if not security_decision.allowed:
                 logger.warning(
-                    f"Tool '{tool_name}' blocked by security guard: {security_decision.reason}"
+                    "Tool '{}' blocked by security guard: {}",
+                    tool_name,
+                    security_decision.reason,
                 )
                 return ToolResult(
                     tool_call_id=tool_call_id,
@@ -234,8 +247,8 @@ class ToolExecutor:
                         success=False,
                     )
                 )
-            else:
-                results.append(cast(ToolResult, raw_result))
+            elif isinstance(raw_result, ToolResult):
+                results.append(raw_result)
 
         success_count = sum(1 for r in results if r.success)
         logger.info("Batch execution completed: {}/{} succeeded", success_count, len(tool_calls))

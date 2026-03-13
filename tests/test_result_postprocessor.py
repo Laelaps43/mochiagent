@@ -187,3 +187,30 @@ async def test_dict_result_serialized(processor: ToolResultPostProcessor, storag
     )
     assert out.summary is not None
     assert "key" in out.summary
+
+
+async def test_basemodel_result_serialized(
+    processor: ToolResultPostProcessor, storage: MemoryStorage
+):
+    from agent.common.tools.results import ReadFileSuccess
+
+    model_result = ReadFileSuccess(
+        path="/tmp/test.txt",
+        content="hello",
+        truncated=False,
+        size_bytes=5,
+        offset=0,
+        limit=100000,
+        next_offset=5,
+        eof=True,
+    )
+    result = _make_result(success=True, result=model_result)
+    out = await processor.process(
+        session_id="sess_1",
+        tool_result=result,
+        tool_arguments={},
+        storage=storage,
+    )
+    assert out.summary is not None
+    assert "/tmp/test.txt" in out.summary
+    assert "hello" in out.summary

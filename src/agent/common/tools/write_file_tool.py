@@ -6,6 +6,7 @@ from typing import override
 
 from agent.core.tools import Tool
 from agent.common.tools._utils import validate_path_within_workspace
+from agent.common.tools.results import ToolError, WriteFileSuccess
 
 
 class WriteFileTool(Tool):
@@ -48,9 +49,11 @@ class WriteFileTool(Tool):
     ) -> object:
         path_error = validate_path_within_workspace(path)
         if path_error:
-            return {"success": False, "error": f"WORKSPACE_VIOLATION: {path_error}"}
+            return ToolError(error=f"WORKSPACE_VIOLATION: {path_error}")
 
         file_path = Path(path)
+        if file_path.is_dir():
+            return ToolError(error=f"Path is a directory: {path}")
         file_path.parent.mkdir(parents=True, exist_ok=True)
         mode = "a" if append else "w"
 
@@ -59,9 +62,8 @@ class WriteFileTool(Tool):
                 _ = f.write(content)
 
         await asyncio.to_thread(_write)
-        return {
-            "success": True,
-            "path": str(file_path),
-            "bytes_written": len(content.encode(encoding, errors="ignore")),
-            "append": append,
-        }
+        return WriteFileSuccess(
+            path=str(file_path),
+            bytes_written=len(content.encode(encoding, errors="ignore")),
+            append=append,
+        )

@@ -54,24 +54,24 @@ class MCPManager:
             logger.info("MCP config not found: {}", path)
             return {}
         try:
-            data = cast(object, json.loads(path.read_text(encoding="utf-8")))
+            raw: object = json.loads(path.read_text(encoding="utf-8"))  # pyright: ignore[reportAny]
         except Exception as exc:
             logger.error("Failed to read MCP config '{}': {}", path, exc)
             return {}
 
-        if not isinstance(data, dict):
+        if not isinstance(raw, dict):
             logger.info("MCP config is not a JSON object in {}", path)
             return {}
+        data = cast(dict[str, object], raw)
 
-        payload = cast(dict[str, object], data)
-        raw_servers: object = payload.get("mcpServers")
+        raw_servers: object = data.get("mcpServers")
         if not isinstance(raw_servers, dict) or not raw_servers:
             logger.info("No mcpServers configured in {}", path)
             return {}
+        server_map = cast(dict[str, object], raw_servers)
 
-        servers_map = cast(dict[str, object], raw_servers)
         servers: dict[str, MCPServerConfig] = {}
-        for name, raw in servers_map.items():
+        for name, raw in server_map.items():
             if isinstance(raw, MCPServerConfig):
                 servers[name] = raw
             elif isinstance(raw, dict):
@@ -88,15 +88,15 @@ class MCPManager:
 
     def register_server(self, server_name: str, cfg: MCPServerConfig) -> MCPServerState:
         state = self._states.get(server_name) or MCPServerState()
-        state.connect_timeout_ms = to_int(cfg.connectTimeoutMs, default=8000, minimum=100)
-        state.max_retries = to_int(cfg.maxRetries, default=2, minimum=0)
-        state.retry_initial_ms = to_int(cfg.retryInitialMs, default=300, minimum=50)
-        state.retry_max_ms = to_int(cfg.retryMaxMs, default=3000, minimum=100)
+        state.connect_timeout_ms = to_int(cfg.connect_timeout_ms, default=8000, minimum=100)
+        state.max_retries = to_int(cfg.max_retries, default=2, minimum=0)
+        state.retry_initial_ms = to_int(cfg.retry_initial_ms, default=300, minimum=50)
+        state.retry_max_ms = to_int(cfg.retry_max_ms, default=3000, minimum=100)
         if state.retry_max_ms < state.retry_initial_ms:
             state.retry_max_ms = state.retry_initial_ms
-        state.failure_threshold = to_int(cfg.failureThreshold, default=3, minimum=1)
-        state.cooldown_sec = to_int(cfg.cooldownSec, default=20, minimum=1)
-        state.tool_timeout_sec = to_int(cfg.toolTimeout, default=self._default_timeout, minimum=1)
+        state.failure_threshold = to_int(cfg.failure_threshold, default=3, minimum=1)
+        state.cooldown_sec = to_int(cfg.cooldown_sec, default=20, minimum=1)
+        state.tool_timeout_sec = to_int(cfg.tool_timeout, default=self._default_timeout, minimum=1)
         self._states[server_name] = state
         return state
 

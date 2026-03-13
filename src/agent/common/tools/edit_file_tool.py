@@ -6,6 +6,7 @@ from typing import override
 
 from agent.core.tools import Tool
 from agent.common.tools._utils import validate_path_within_workspace
+from agent.common.tools.results import EditFileSuccess, ToolError
 
 
 class EditFileTool(Tool):
@@ -64,42 +65,49 @@ class EditFileTool(Tool):
     ) -> object:
         path_error = validate_path_within_workspace(path)
         if path_error:
-            return {"success": False, "error": f"WORKSPACE_VIOLATION: {path_error}"}
+            return ToolError(error=f"WORKSPACE_VIOLATION: {path_error}")
 
         file_path = Path(path)
         if not file_path.exists():
-            return {"success": False, "error": f"File not found: {path}"}
+            return ToolError(error=f"File not found: {path}")
         if file_path.is_dir():
-            return {"success": False, "error": f"Path is a directory: {path}"}
+            return ToolError(error=f"Path is a directory: {path}")
 
-        def _edit() -> dict[str, object]:
+        def _edit() -> EditFileSuccess | ToolError:
             original = file_path.read_text(encoding=encoding)
+            total_matches = 0
 
             if content is not None:
                 updated = content
                 count = 1
             else:
                 if old_string is None or new_string is None:
-                    return {
-                        "success": False,
-                        "error": "Either provide content, or provide old_string and new_string.",
-                    }
+                    return ToolError(
+                        error="Either provide content, or provide old_string and new_string.",
+                    )
 
                 if replace_all:
                     count = original.count(old_string)
                     updated = original.replace(old_string, new_string)
                 else:
-                    count = 1 if old_string in original else 0
+                    total_matches = original.count(old_string)
+                    count = 1 if total_matches > 0 else 0
                     updated = original.replace(old_string, new_string, 1)
 
                 if count == 0:
-                    return {"success": False, "error": "old_string not found in file"}
+                    return ToolError(error="old_string not found in file")
 
             _ = file_path.write_text(updated, encoding=encoding)
-            return {
-                "success": True,
-                "path": str(file_path),
-                "replacements": count,
-            }
+            warning: str | None = None
+            if not replace_all and content is None and total_matches > 1:
+                warning = (
+                    f"old_string matched {total_matches} times but only the first "
+                    "occurrence was replaced. Use replace_all=true to replace all."
+                )
+            return EditFileSuccess(
+                path=str(file_path),
+                replacements=count,
+                warning=warning,
+            )
 
         return await asyncio.to_thread(_edit)

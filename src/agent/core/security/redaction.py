@@ -5,6 +5,7 @@ Redaction helpers for sensitive data in logs and persisted metadata.
 from __future__ import annotations
 
 import re
+
 from typing import cast
 
 REDACTED = "[REDACTED]"
@@ -57,20 +58,18 @@ def _is_sensitive_key(key: object) -> bool:
 def redact_dict(data: object) -> object:
     """Recursively redact sensitive fields in dict/list trees."""
     if isinstance(data, dict):
-        data_dict = cast(dict[object, object], data)
+        d = cast(dict[object, object], data)
         redacted: dict[object, object] = {}
-        for key, value in data_dict.items():
+        for key, value in d.items():
             if _is_sensitive_key(key):
                 redacted[key] = mask_secret(value)
             else:
                 redacted[key] = redact_dict(value)
         return redacted
     if isinstance(data, list):
-        data_list = cast(list[object], data)
-        return [redact_dict(item) for item in data_list]
+        return [redact_dict(item) for item in cast(list[object], data)]
     if isinstance(data, tuple):
-        data_tuple = cast(tuple[object, ...], data)
-        return tuple(redact_dict(item) for item in data_tuple)
+        return tuple(redact_dict(item) for item in cast(tuple[object, ...], data))
     return data
 
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import override
 
 from agent.core.tools import Tool
 from agent.common.tools._utils import validate_path_within_workspace
+from agent.common.tools.results import ListDirSuccess, ToolError
 
 
 class ListDirTool(Tool):
@@ -43,23 +45,26 @@ class ListDirTool(Tool):
     async def execute(self, path: str = ".", max_entries: int = 200, **kwargs: object) -> object:
         path_error = validate_path_within_workspace(path)
         if path_error:
-            return {"success": False, "error": f"WORKSPACE_VIOLATION: {path_error}"}
+            return ToolError(error=f"WORKSPACE_VIOLATION: {path_error}")
 
         dir_path = Path(path)
         if not dir_path.exists():
-            return {"success": False, "error": f"Directory not found: {path}"}
+            return ToolError(error=f"Directory not found: {path}")
         if not dir_path.is_dir():
-            return {"success": False, "error": f"Path is not a directory: {path}"}
+            return ToolError(error=f"Path is not a directory: {path}")
 
-        entries: list[str] = []
-        for entry in sorted(dir_path.iterdir(), key=lambda x: x.name):
-            entries.append(entry.name + ("/" if entry.is_dir() else ""))
-            if len(entries) >= max_entries:
-                break
+        def _list() -> list[str]:
+            entries: list[str] = []
+            for entry in sorted(dir_path.iterdir(), key=lambda x: x.name):
+                entries.append(entry.name + ("/" if entry.is_dir() else ""))
+                if len(entries) >= max_entries:
+                    break
+            return entries
 
-        return {
-            "success": True,
-            "path": str(dir_path),
-            "entries": entries,
-            "truncated": len(entries) >= max_entries,
-        }
+        entries = await asyncio.to_thread(_list)
+
+        return ListDirSuccess(
+            path=str(dir_path),
+            entries=entries,
+            truncated=len(entries) >= max_entries,
+        )

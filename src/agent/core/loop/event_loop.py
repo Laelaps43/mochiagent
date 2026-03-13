@@ -90,6 +90,16 @@ class AgentEventLoop:
         async with self._session_locks_guard:
             _ = self._session_locks.pop(session_id, None)
 
+    async def cleanup_stale_locks(self) -> None:
+        """Remove locks for sessions that are no longer in the session manager cache."""
+        async with self._session_locks_guard:
+            active_ids = set(self.session_manager.cached_session_ids())
+            stale = [sid for sid in self._session_locks if sid not in active_ids]
+            for sid in stale:
+                del self._session_locks[sid]
+            if stale:
+                logger.info("Cleaned up {} stale session locks", len(stale))
+
     async def _emit_error_and_done(
         self,
         *,
@@ -329,11 +339,15 @@ class AgentEventLoop:
         tool_args_by_call_id: dict[str, dict[str, object]] = {}
         for tool_call in tool_calls:
             raw_args = tool_call.function.arguments or "{}"
-            parsed: dict[str, object]
             try:
-                parsed = cast(dict[str, object], json.loads(raw_args))
+                loaded: object = json.loads(raw_args)  # pyright: ignore[reportAny]
+                parsed: dict[str, object] = (
+                    cast(dict[str, object], loaded)
+                    if isinstance(loaded, dict)
+                    else {"raw": raw_args}
+                )
             except Exception:
-                parsed = cast(dict[str, object], {"raw": raw_args})
+                parsed = {"raw": raw_args}
             tool_args_by_call_id[tool_call.id] = parsed
 
         for result in results:

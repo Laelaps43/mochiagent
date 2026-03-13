@@ -94,11 +94,14 @@ class OpenAIAdapter(LLMProvider):
     def _parse_error_body(body_text: str) -> tuple[str | None, str | None]:
         """从 JSON error body 中提取 provider_code 和 provider_message。"""
         try:
-            payload = cast("dict[str, object]", json.loads(body_text))
-            error_obj = payload.get("error")
+            loaded: object = json.loads(body_text)  # pyright: ignore[reportAny]
+            if not isinstance(loaded, dict):
+                return None, None
+            data = cast(dict[str, object], loaded)
+            error_obj = data.get("error")
             if not isinstance(error_obj, dict):
                 return None, None
-            error = cast("dict[str, object]", error_obj)
+            error = cast(dict[str, object], error_obj)
             code: object | None = error.get("code")
             message: object | None = error.get("message")
             return (
@@ -142,7 +145,8 @@ class OpenAIAdapter(LLMProvider):
         base_url = self.config.base_url
 
         if isinstance(exc, KeyError):
-            missing_key = str(cast(object, exc.args[0])) if exc.args else "unknown"
+            first_arg: object = exc.args[0] if exc.args else None
+            missing_key = str(first_arg) if first_arg is not None else "unknown"
             is_stream = operation == "stream_chat"
             parse_subject = (
                 "OpenAI-compatible streaming parse failed "

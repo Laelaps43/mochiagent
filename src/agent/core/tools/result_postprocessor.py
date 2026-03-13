@@ -114,6 +114,8 @@ class ToolResultPostProcessor(ToolResultPostProcessorStrategy):
     def _serialize_result(value: object) -> str:
         if isinstance(value, str):
             return value
+        if isinstance(value, BaseModel):
+            return json.dumps(value.model_dump(), ensure_ascii=False, indent=2)
         try:
             return json.dumps(value, ensure_ascii=False, indent=2)
         except (TypeError, ValueError):

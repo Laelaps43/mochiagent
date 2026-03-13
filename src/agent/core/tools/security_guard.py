@@ -11,9 +11,11 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 from collections.abc import Mapping
-from typing import ClassVar, cast
+from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict
+from typing import cast
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SecurityDecision(BaseModel):
@@ -28,7 +30,9 @@ class ToolSecurityConfig(BaseModel):
 
     enforce_workspace: bool = True
     enforce_command_guard: bool = True
-    command_deny_tokens: set[str] | None = None
+    command_deny_tokens: set[str] = Field(
+        default_factory=lambda: {"`", "$(", "\n", "\r", ";", "&&", "||", "|", ">", ">>", "<"}
+    )
 
 
 class ToolSecurityGuard:
@@ -38,25 +42,27 @@ class ToolSecurityGuard:
         self.config: ToolSecurityConfig = config
 
     def validate_tool_call(self, tool: object, arguments: Mapping[str, object]) -> SecurityDecision:
-        schema = cast(dict[str, object], getattr(tool, "parameters_schema", {}) or {})
-        properties = cast(dict[str, object], schema.get("properties") or {})
+        raw_schema = getattr(tool, "parameters_schema", None)
+        schema = cast(dict[str, object], raw_schema) if isinstance(raw_schema, dict) else {}
+        raw_props = schema.get("properties")
+        properties = cast(dict[str, object], raw_props) if isinstance(raw_props, dict) else {}
 
-        for key, prop in properties.items():
-            if not isinstance(prop, dict):
+        for key, raw_prop in properties.items():
+            if not isinstance(raw_prop, dict):
                 continue
-            prop_d = cast(dict[str, object], prop)
+            prop = cast(dict[str, object], raw_prop)
             value = arguments.get(key)
             if value is None:
                 continue
 
-            if (prop_d.get("x-workspace-path") or prop_d.get("x-workspace-cwd")) and isinstance(
+            if (prop.get("x-workspace-path") or prop.get("x-workspace-cwd")) and isinstance(
                 value, str
             ):
                 decision = self._validate_path(value)
                 if not decision.allowed:
                     return decision
 
-            if prop_d.get("x-shell-command") and isinstance(value, str):
+            if prop.get("x-shell-command") and isinstance(value, str):
                 decision = self._validate_shell_command(value, arguments)
                 if not decision.allowed:
                     return decision
@@ -83,7 +89,7 @@ class ToolSecurityGuard:
         if not self.config.enforce_command_guard:
             return SecurityDecision(allowed=True, reason="command guard disabled")
 
-        deny_tokens = self.config.command_deny_tokens or set()
+        deny_tokens = self.config.command_deny_tokens
         if deny_tokens:
             for deny_token in deny_tokens:
                 if deny_token in command:
@@ -122,6 +128,16 @@ class ToolSecurityGuard:
         return SecurityDecision(allowed=True, reason="command allowed")
 
     @staticmethod
+    def _is_path_like(value: str) -> bool:
+        if value.startswith("/") or value.startswith("~/"):
+            return True
+        if value.startswith("./") or value.startswith("../") or value in {".", ".."}:
+            return True
+        if "/" in value:
+            return True
+        return False
+
+    @staticmethod
     def _extract_paths_from_command(command: str) -> list[str]:
         try:
             tokens = shlex.split(command, posix=True)
@@ -135,14 +151,13 @@ class ToolSecurityGuard:
                 path_candidates.append(token)
                 continue
             if token.startswith("-"):
+                # Extract path from --flag=value patterns
+                if "=" in token:
+                    value = token.split("=", 1)[1]
+                    if value and ToolSecurityGuard._is_path_like(value):
+                        path_candidates.append(value)
                 continue
-            if token.startswith("/") or token.startswith("~/"):
-                path_candidates.append(token)
-                continue
-            if token.startswith("./") or token.startswith("../") or token in {".", ".."}:
-                path_candidates.append(token)
-                continue
-            if "/" in token:
+            if ToolSecurityGuard._is_path_like(token):
                 path_candidates.append(token)
 
         return path_candidates

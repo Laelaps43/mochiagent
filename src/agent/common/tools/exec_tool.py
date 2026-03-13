@@ -5,7 +5,8 @@ from typing import override
 
 from agent.core.tools import Tool
 
-from ._utils import truncate_text
+from ._utils import truncate_text, validate_path_within_workspace
+from .results import ExecResult, ToolError
 
 
 class ExecTool(Tool):
@@ -46,6 +47,10 @@ class ExecTool(Tool):
     async def execute(
         self, command: str = "", workdir: str | None = None, **kwargs: object
     ) -> object:
+        if workdir:
+            path_error = validate_path_within_workspace(workdir)
+            if path_error:
+                return ToolError(error=f"WORKSPACE_VIOLATION: {path_error}")
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=workdir,
@@ -65,11 +70,9 @@ class ExecTool(Tool):
         combined = stdout + ("\n" if stdout and stderr else "") + stderr
         truncated_output, truncated = truncate_text(combined, self.max_output_chars)
 
-        return {
-            "success": proc.returncode == 0,
-            "exit_code": proc.returncode,
-            "output": truncated_output,
-            "stdout": stdout,
-            "stderr": stderr,
-            "truncated": truncated,
-        }
+        return ExecResult(
+            success=proc.returncode == 0,
+            exit_code=proc.returncode,
+            output=truncated_output,
+            truncated=truncated,
+        )

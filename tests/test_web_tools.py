@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import cast
 from unittest.mock import AsyncMock, patch
+
+from pydantic import SecretStr
 
 from agent.common.tools.web_fetch_tool import WebFetchTool
 from agent.common.tools.web_search_tool import WebSearchTool
+from agent.common.tools.results import ToolError, WebFetchSuccess, WebSearchSuccess
 
 
 class _FakeResponse:
@@ -13,6 +15,7 @@ class _FakeResponse:
     url: str
     headers: dict[str, str]
     _json: dict[str, object]
+    next_request: object
 
     def __init__(
         self,
@@ -26,6 +29,11 @@ class _FakeResponse:
         self.url = url
         self.headers = {"content-type": "text/html"}
         self._json = json_data or {}
+        self.next_request = None
+
+    @property
+    def is_redirect(self) -> bool:
+        return self.status_code in (301, 302, 303, 307, 308)
 
     def json(self) -> dict[str, object]:
         return self._json
@@ -36,7 +44,7 @@ class _FakeAsyncClient:
     get: AsyncMock
     post: AsyncMock
 
-    def __init__(self, response: _FakeResponse) -> None:
+    def __init__(self, response: _FakeResponse, **_kwargs: object) -> None:
         self._response = response
         self.get = AsyncMock(return_value=response)
         self.post = AsyncMock(return_value=response)
@@ -50,9 +58,9 @@ class _FakeAsyncClient:
 
 async def test_web_fetch_invalid_url_returns_error() -> None:
     tool = WebFetchTool()
-    result = cast(dict[str, object], await tool.execute(url="ftp://example.com"))
-    assert result["success"] is False
-    assert "http" in str(result["error"]).lower()
+    result = await tool.execute(url="ftp://example.com")
+    assert isinstance(result, ToolError)
+    assert "http" in result.error.lower()
 
 
 async def test_web_fetch_success_200() -> None:
@@ -60,10 +68,11 @@ async def test_web_fetch_success_200() -> None:
     fake_resp = _FakeResponse(200, text="<html>hello</html>")
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(url="https://example.com"))
-    assert result["success"] is True
-    assert result["status_code"] == 200
-    assert "hello" in str(result["content"])
+        result = await tool.execute(url="https://example.com")
+    assert isinstance(result, WebFetchSuccess)
+    assert result.success is True
+    assert result.status_code == 200
+    assert "hello" in result.content
 
 
 async def test_web_fetch_404_returns_failure() -> None:
@@ -71,9 +80,10 @@ async def test_web_fetch_404_returns_failure() -> None:
     fake_resp = _FakeResponse(404, text="Not Found", url="https://example.com/nope")
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(url="https://example.com/nope"))
-    assert result["success"] is False
-    assert result["status_code"] == 404
+        result = await tool.execute(url="https://example.com/nope")
+    assert isinstance(result, WebFetchSuccess)
+    assert result.success is False
+    assert result.status_code == 404
 
 
 async def test_web_fetch_content_truncated() -> None:
@@ -82,8 +92,9 @@ async def test_web_fetch_content_truncated() -> None:
     fake_resp = _FakeResponse(200, text=long_text)
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(url="https://example.com"))
-    assert result["truncated"] is True
+        result = await tool.execute(url="https://example.com")
+    assert isinstance(result, WebFetchSuccess)
+    assert result.truncated is True
 
 
 async def test_web_fetch_content_not_truncated() -> None:
@@ -92,13 +103,14 @@ async def test_web_fetch_content_not_truncated() -> None:
     fake_resp = _FakeResponse(200, text=short_text)
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(url="https://example.com"))
-    assert result["truncated"] is False
-    assert result["content"] == short_text
+        result = await tool.execute(url="https://example.com")
+    assert isinstance(result, WebFetchSuccess)
+    assert result.truncated is False
+    assert result.content == short_text
 
 
 async def test_web_search_uses_brave_when_api_key_set() -> None:
-    tool = WebSearchTool(api_key="test-key")
+    tool = WebSearchTool(api_key=SecretStr("test-key"))
     brave_json: dict[str, object] = {
         "web": {
             "results": [
@@ -110,12 +122,11 @@ async def test_web_search_uses_brave_when_api_key_set() -> None:
     fake_resp = _FakeResponse(200, json_data=brave_json)
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(query="python async", count=2))
-    assert result["success"] is True
-    assert result["provider"] == "brave"
-    results = cast(list[dict[str, object]], result["results"])
-    assert len(results) == 2
-    assert results[0]["title"] == "Result 1"
+        result = await tool.execute(query="python async", count=2)
+    assert isinstance(result, WebSearchSuccess)
+    assert result.provider == "brave"
+    assert len(result.results) == 2
+    assert result.results[0].title == "Result 1"
 
 
 async def test_web_search_uses_duckduckgo_when_no_api_key() -> None:
@@ -129,19 +140,19 @@ async def test_web_search_uses_duckduckgo_when_no_api_key() -> None:
     fake_resp = _FakeResponse(200, text=html)
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(query="test query", count=2))
-    assert result["success"] is True
-    assert result["provider"] == "duckduckgo"
+        result = await tool.execute(query="test query", count=2)
+    assert isinstance(result, WebSearchSuccess)
+    assert result.provider == "duckduckgo"
 
 
 async def test_web_search_brave_http_error() -> None:
-    tool = WebSearchTool(api_key="test-key")
+    tool = WebSearchTool(api_key=SecretStr("test-key"))
     fake_resp = _FakeResponse(403, text="Forbidden")
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(query="blocked"))
-    assert result["success"] is False
-    assert "403" in str(result["error"])
+        result = await tool.execute(query="blocked")
+    assert isinstance(result, ToolError)
+    assert "403" in result.error
 
 
 async def test_web_search_duckduckgo_http_error() -> None:
@@ -149,43 +160,41 @@ async def test_web_search_duckduckgo_http_error() -> None:
     fake_resp = _FakeResponse(503, text="Service Unavailable")
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(query="down"))
-    assert result["success"] is False
-    assert "503" in str(result["error"])
+        result = await tool.execute(query="down")
+    assert isinstance(result, ToolError)
+    assert "503" in result.error
 
 
 async def test_web_search_count_clamp_max() -> None:
-    tool = WebSearchTool(api_key="k")
+    tool = WebSearchTool(api_key=SecretStr("k"))
     brave_json: dict[str, object] = {"web": {"results": []}}
     fake_resp = _FakeResponse(200, json_data=brave_json)
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(query="q", count=999))
-    assert result["success"] is True
-    results = cast(list[object], result["results"])
-    assert len(results) <= 20
+        result = await tool.execute(query="q", count=999)
+    assert isinstance(result, WebSearchSuccess)
+    assert len(result.results) <= 20
 
 
 async def test_web_search_count_clamp_min() -> None:
-    tool = WebSearchTool(api_key="k")
+    tool = WebSearchTool(api_key=SecretStr("k"))
     brave_json: dict[str, object] = {"web": {"results": []}}
     fake_resp = _FakeResponse(200, json_data=brave_json)
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(query="q", count=0))
-    assert result["success"] is True
+        result = await tool.execute(query="q", count=0)
+    assert isinstance(result, WebSearchSuccess)
 
 
 async def test_web_search_brave_empty_results() -> None:
-    tool = WebSearchTool(api_key="key")
+    tool = WebSearchTool(api_key=SecretStr("key"))
     brave_json: dict[str, object] = {"web": {}}
     fake_resp = _FakeResponse(200, json_data=brave_json)
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(query="nothing", count=5))
-    assert result["success"] is True
-    results = cast(list[object], result["results"])
-    assert len(results) == 0
+        result = await tool.execute(query="nothing", count=5)
+    assert isinstance(result, WebSearchSuccess)
+    assert len(result.results) == 0
 
 
 async def test_web_search_duckduckgo_no_matches() -> None:
@@ -193,10 +202,9 @@ async def test_web_search_duckduckgo_no_matches() -> None:
     fake_resp = _FakeResponse(200, text="<html><body>no results here</body></html>")
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(query="zzz", count=3))
-    assert result["success"] is True
-    results = cast(list[object], result["results"])
-    assert len(results) == 0
+        result = await tool.execute(query="zzz", count=3)
+    assert isinstance(result, WebSearchSuccess)
+    assert len(result.results) == 0
 
 
 async def test_web_search_duckduckgo_count_limit() -> None:
@@ -208,6 +216,6 @@ async def test_web_search_duckduckgo_count_limit() -> None:
     fake_resp = _FakeResponse(200, text=html)
     client = _FakeAsyncClient(fake_resp)
     with patch("httpx.AsyncClient", return_value=client):
-        result = cast(dict[str, object], await tool.execute(query="many", count=3))
-    results = cast(list[object], result["results"])
-    assert len(results) == 3
+        result = await tool.execute(query="many", count=3)
+    assert isinstance(result, WebSearchSuccess)
+    assert len(result.results) == 3

@@ -301,3 +301,30 @@ def test_tool_part_pending_to_llm_format_returns_none() -> None:
     )
     fmt = part.to_llm_format()
     assert fmt is None
+
+
+def test_update_to_completed_basemodel_result() -> None:
+    from agent.common.tools.results import ReadFileSuccess
+
+    part = _make_running_part()
+    model_result = ReadFileSuccess(
+        path="/tmp/test.txt",
+        content="hello",
+        truncated=False,
+        size_bytes=5,
+        offset=0,
+        limit=100000,
+        next_offset=5,
+        eof=True,
+    )
+    result = ToolResult(
+        tool_call_id="call_1",
+        tool_name="read_file",
+        result=model_result,
+        success=True,
+        summary=None,
+    )
+    completed = part.update_to_completed(result)
+    assert isinstance(completed.state, ToolStateCompleted)
+    assert "/tmp/test.txt" in completed.state.output
+    assert "hello" in completed.state.output

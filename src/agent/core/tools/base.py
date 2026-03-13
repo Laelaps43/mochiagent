@@ -5,7 +5,6 @@ Tool Base - 工具基类
 from abc import ABC, abstractmethod
 from typing import cast
 
-
 from agent.types import ToolDefinition
 
 
@@ -68,9 +67,12 @@ class Tool(ABC):
             ToolDefinition对象
         """
         schema = self.parameters_schema
+        raw_required = schema.get("required")
         return ToolDefinition(
             name=self.name,
             description=self.description,
             parameters=schema,
-            required=cast(list[str], schema.get("required", [])),
+            required=[r for r in cast(list[object], raw_required) if isinstance(r, str)]
+            if isinstance(raw_required, list)
+            else [],
         )

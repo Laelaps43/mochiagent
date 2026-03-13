@@ -197,10 +197,14 @@ class ToolPart(PartBase):
         import json
 
         # 优先使用后处理得到的摘要；未提供时回退到 result 序列化文本。
+        from pydantic import BaseModel as _BaseModel
+
         if result.summary is not None:
             output = result.summary
         elif isinstance(result.result, str):
             output = result.result
+        elif isinstance(result.result, _BaseModel):
+            output = json.dumps(result.result.model_dump(), ensure_ascii=False)
         else:
             try:
                 output = json.dumps(result.result, ensure_ascii=False)
@@ -230,12 +234,6 @@ class ToolPart(PartBase):
                 metadata={
                     "tool_call_id": result.tool_call_id,
                     "tool_name": result.tool_name,
-                    "error": result.error,
-                    "success": result.success,
-                    "artifact_ref": result.artifact_ref,
-                    "artifact_path": result.artifact_path,
-                    "raw_size_chars": result.raw_size_chars,
-                    "truncated": result.truncated,
                 },
                 time=TimeInfo(
                     start=self.state.time.start,
