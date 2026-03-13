@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, override
+from typing import override
 
+from agent.core.llm.base import LLMProvider
 from agent.core.llm.errors import is_context_overflow_error as _is_context_overflow
-from agent.types import LLMConfig, LLMStreamChunk
+from agent.core.llm.types import LLMStreamChunk
+from agent.core.session.types import ContextBudget
+from agent.types import LLMConfig
 
 from agent.core.compression.compactor import ContextCompactor
 from agent.core.compression.types import (
@@ -23,10 +26,6 @@ from agent.core.message import (
 )
 from agent.core.compression.stage import CompactionStage
 from agent.core.utils import estimate_tokens
-
-if TYPE_CHECKING:
-    from agent.core.llm.base import LLMProvider
-    from agent.types import ContextBudget
 
 
 SUMMARIZATION_PROMPT = (

@@ -8,12 +8,10 @@ its description based on available skills.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, override
+from typing import override
 
+from ..skill.loader import Skill
 from ...core.tools import Tool
-
-if TYPE_CHECKING:
-    from ..skill.loader import Skill
 
 
 class SkillTool(Tool):

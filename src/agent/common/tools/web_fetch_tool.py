@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from typing import override
+from typing import cast, override
 from urllib.parse import urlparse
 
 import httpx
@@ -116,7 +116,10 @@ class WebFetchTool(Tool):
 
                 text = response.text[: self.max_chars * 2]
                 output, truncated = truncate_text(text, self.max_chars)
-                content_type: str = response.headers.get("content-type", "")  # pyright: ignore[reportAny]
+                raw_content_type = cast(object, response.headers.get("content-type", ""))
+                content_type = (
+                    raw_content_type if isinstance(raw_content_type, str) else str(raw_content_type)
+                )
 
                 return WebFetchSuccess(
                     success=response.status_code < 400,

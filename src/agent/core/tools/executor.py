@@ -15,7 +15,7 @@ from .security_guard import ToolSecurityGuard
 from agent.common.tools._utils import set_workspace_root
 from typing import cast
 from agent.config.tools import ToolRuntimeConfig, ToolPolicyConfig, ToolSecurityConfig
-from agent.types import ToolCallPayload, ToolResult
+from .types import ToolCallPayload, ToolResult
 
 
 class ToolExecutor:
@@ -85,7 +85,7 @@ class ToolExecutor:
         try:
             # 解析参数
             try:
-                parsed: object = json.loads(arguments_str)  # pyright: ignore[reportAny]
+                parsed = cast(object, json.loads(arguments_str))
                 if not isinstance(parsed, dict):
                     return ToolResult(
                         tool_call_id=tool_call_id,

@@ -4,11 +4,11 @@ from typing import override
 import pytest
 
 from agent.core.storage.memory import MemoryStorage
-from agent.core.tools.result_postprocessor import (
+from agent.core.runtime.result_postprocessor import (
     ToolResultPostProcessConfig,
     ToolResultPostProcessor,
 )
-from agent.types import ToolResult
+from agent.core.tools.types import ToolResult
 
 
 def _make_result(
@@ -107,7 +107,7 @@ async def test_large_result_no_artifact_support():
         StorageProvider,
     )
     from agent.core.message import Message
-    from agent.types import SessionMetadataData
+    from agent.core.session.types import SessionMetadataData
 
     class _NoArtifactStorage(StorageProvider):
         @override

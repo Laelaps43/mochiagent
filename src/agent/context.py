@@ -6,18 +6,14 @@ Agent Context - Agent 运行上下文
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from agent.core.message import UserInput
 from loguru import logger
 from .core.bus import MessageBus
 from .core.utils import normalize_profile_id
 from .core.runtime import AgentStrategyManager
 from .core.session import SessionManager
+from .session import Session
 from .types import Event, EventType, LLMConfig, SessionState
-
-if TYPE_CHECKING:
-    from .session import Session
 
 
 class AgentContext:
@@ -65,8 +61,6 @@ class AgentContext:
             raise ValueError(
                 f"Agent context mismatch: expected '{self.agent_name}', got '{agent_name}'"
             )
-
-        from .session import Session
 
         context = await self.session_manager.get_or_create_session(
             session_id=session_id,

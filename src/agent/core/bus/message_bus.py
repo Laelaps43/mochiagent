@@ -33,9 +33,6 @@ class MessageBus:
         self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
     ) -> None:
         """订阅指定事件类型。
-
-        应在 ``start()`` 之前调用，或确保在同一事件循环中调用。
-        ``_handle_event`` 已使用 ``list(...)`` 快照保护迭代安全。
         """
         self._subscribers[event_type].append(handler)
         logger.debug("Subscribed to {}: {}", event_type.value, handler.__name__)
@@ -44,9 +41,6 @@ class MessageBus:
         self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
     ) -> None:
         """取消订阅指定事件类型。
-
-        应在 ``start()`` 之前调用，或确保在同一事件循环中调用。
-        ``_handle_event`` 已使用 ``list(...)`` 快照保护迭代安全。
         """
         if event_type in self._subscribers:
             try:
@@ -61,7 +55,7 @@ class MessageBus:
 
     async def publish(self, event: Event) -> None:
         if not self._running:
-            logger.warning("Publishing event after MessageBus stopped: %s", event.type.value)
+            logger.warning("Publishing event after MessageBus stopped: {}", event.type.value)
         await self._queue.put(event)
         logger.debug("Published event: {} for session {}", event.type.value, event.session_id)
 

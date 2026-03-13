@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import final, override
 
@@ -78,10 +78,10 @@ class _FrameworkAgent(BaseAgent):
 
 
 @pytest.fixture(autouse=True)
-def _reset_framework() -> Iterator[None]:
-    reset_framework()
+async def _reset_framework() -> AsyncIterator[None]:
+    await reset_framework()
     yield
-    reset_framework()
+    await reset_framework()
 
 
 _ = _reset_framework
@@ -303,12 +303,12 @@ def test_framework_registry_should_recreate_instance_covers_all_branches() -> No
     )
 
 
-def test_framework_registry_get_creates_reuses_and_recreates_uninitialized_instance() -> None:
+async def test_framework_registry_get_creates_reuses_and_recreates_uninitialized_instance() -> None:
     registry = FrameworkRegistry()
 
-    first = registry.get()
-    second = registry.get()
-    recreated = registry.get(max_concurrent=8, max_iterations=0)
+    first = await registry.get()
+    second = await registry.get()
+    recreated = await registry.get(max_concurrent=8, max_iterations=0)
 
     assert second is first
     assert recreated is not first
@@ -318,24 +318,24 @@ def test_framework_registry_get_creates_reuses_and_recreates_uninitialized_insta
 
 async def test_framework_registry_get_raises_on_config_conflict_after_initialization() -> None:
     registry = FrameworkRegistry()
-    current = registry.get(max_concurrent=10, max_iterations=10)
+    current = await registry.get(max_concurrent=10, max_iterations=10)
     await current.initialize(MemoryStorage())
 
     with pytest.raises(RuntimeError, match="Framework already initialized"):
-        _ = registry.get(max_concurrent=99, max_iterations=3)
+        _ = await registry.get(max_concurrent=99, max_iterations=3)
 
 
-def test_get_framework_and_reset_framework_manage_module_singleton() -> None:
-    first = get_framework(max_concurrent=7, max_iterations=12)
-    second = get_framework()
+async def test_get_framework_and_reset_framework_manage_module_singleton() -> None:
+    first = await get_framework(max_concurrent=7, max_iterations=12)
+    second = await get_framework()
 
     assert second is first
     assert first.max_concurrent == 7
     assert first.max_iterations == 12
 
-    reset_framework()
+    await reset_framework()
 
-    third = get_framework(max_concurrent=9, max_iterations=4)
+    third = await get_framework(max_concurrent=9, max_iterations=4)
 
     assert third is not first
     assert third.max_concurrent == 9

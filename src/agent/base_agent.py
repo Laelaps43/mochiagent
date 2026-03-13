@@ -2,23 +2,20 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from .config import ToolRuntimeConfig
 from .core.mcp.manager import MCPManager
+from .core.mcp.types import MCPServerSnapshot
 from .core.tools import Tool, ToolRegistry, ToolExecutor
 from .core.message import UserInput, UserTextInput
+from .core.session.context import SessionContext
 from .common.skill import Skill, SkillLoader
 from .common.tools import SkillTool
 from .context import AgentContext
 from .types import Event
 from .session import Session
-
-if TYPE_CHECKING:
-    from .core.mcp.types import MCPServerSnapshot
-    from .core.session import SessionContext
 
 
 class BaseAgent(ABC):
@@ -71,6 +68,9 @@ class BaseAgent(ABC):
         self._ctx = ctx
         logger.debug("Agent {} bound to context", self.name)
 
+    def unbind_context(self) -> None:
+        self._ctx = None
+
     @property
     def context(self) -> AgentContext:
         """
@@ -100,7 +100,7 @@ class BaseAgent(ABC):
         """Agent 初始化钩子（注册工具和 skills）"""
         pass
 
-    def get_system_prompt(self, _context: "SessionContext") -> str | None:
+    def get_system_prompt(self, _context: SessionContext) -> str | None:
         """
         返回当前 agent 的专属 system prompt（可选覆盖）
 
@@ -183,7 +183,7 @@ class BaseAgent(ABC):
             )
             await manager.close()
 
-    def get_mcp_status(self) -> dict[str, "MCPServerSnapshot"]:
+    def get_mcp_status(self) -> dict[str, MCPServerSnapshot]:
         """
         返回当前 Agent 维护的 MCP 服务状态快照。
 

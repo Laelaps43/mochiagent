@@ -19,15 +19,14 @@ from agent.core.llm import AdapterRegistry
 from agent.core.loop.llm_turn_handler import LLMTurnHandler
 from agent.core.message import ToolPart
 from agent.core.session import SessionManager
+from agent.core.tools.types import ToolCallPayload, ToolResult
 from agent.types import (
-    ContextBudget,
     Event,
     EventType,
     SessionState,
     TokenUsage,
-    ToolCallPayload,
-    ToolResult,
 )
+from agent.core.session.types import ContextBudget
 
 from agent.core.loop._framework_protocol import FrameworkProtocol
 
@@ -368,7 +367,7 @@ class AgentEventLoop:
         for tool_call in tool_calls:
             raw_args = tool_call.function.arguments or "{}"
             try:
-                loaded: object = json.loads(raw_args)  # pyright: ignore[reportAny]
+                loaded = cast(object, json.loads(raw_args))
                 parsed: dict[str, object] = (
                     cast(dict[str, object], loaded)
                     if isinstance(loaded, dict)

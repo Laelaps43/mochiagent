@@ -9,7 +9,8 @@ from pydantic import SecretStr
 from agent.core.llm.base import LLMProvider
 from agent.core.message.message import Message
 from agent.core.llm.provider import AdapterRegistry
-from agent.types import LLMConfig, LLMStreamChunk, ToolDefinition
+from agent.core.llm.types import LLMStreamChunk
+from agent.types import LLMConfig, ToolDefinition
 
 
 def _make_config(adapter: str = "openai_compatible") -> LLMConfig:

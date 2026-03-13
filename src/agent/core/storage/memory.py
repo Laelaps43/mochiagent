@@ -14,7 +14,7 @@ from uuid import uuid4
 from loguru import logger
 
 from agent.core.message import Message
-from agent.types import SessionMetadataData
+from agent.core.session.types import SessionMetadataData
 
 from .provider import (
     ArtifactMetadata,
@@ -27,14 +27,6 @@ class MemoryStorage(StorageProvider):
     """
     纯内存存储（默认）
 
-    特点：
-    - 快速
-    - 服务重启后数据丢失
-    - 适合开发、测试和无需持久化的场景
-
-    数据结构：
-    - _sessions: 会话元数据
-    - _messages: 会话消息列表
     """
 
     SESSION_COUNT_WARNING_THRESHOLD: int = 500

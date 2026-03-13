@@ -93,7 +93,7 @@ async def run_once(prompt: str) -> None:
         max_concurrent=50,
         max_iterations=100,
     )
-    agent = get_agent("demo_agent")
+    agent = await get_agent("demo_agent")
     if agent is None:
         raise RuntimeError("demo_agent not found")
 

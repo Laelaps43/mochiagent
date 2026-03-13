@@ -54,7 +54,7 @@ class MCPManager:
             logger.info("MCP config not found: {}", path)
             return {}
         try:
-            raw: object = json.loads(path.read_text(encoding="utf-8"))  # pyright: ignore[reportAny]
+            raw = cast(object, json.loads(path.read_text(encoding="utf-8")))
         except Exception as exc:
             logger.error("Failed to read MCP config '{}': {}", path, exc)
             return {}

@@ -8,7 +8,8 @@ from collections.abc import AsyncGenerator
 
 from agent.core.message import Message as InternalMessage
 from agent.core.message.part import TextPart, ToolPart
-from agent.types import LLMConfig, LLMStreamChunk, ToolDefinition
+from agent.types import LLMConfig, ToolDefinition
+from .types import LLMStreamChunk
 
 
 class LLMProvider(ABC):

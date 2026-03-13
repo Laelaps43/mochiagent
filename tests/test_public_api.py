@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast, final, override
 
@@ -47,12 +47,12 @@ class _SimpleAgent(BaseAgent):
 
 
 @pytest.fixture(autouse=True)
-def reset_framework_and_registry() -> Iterator[None]:
-    reset_framework()
+async def reset_framework_and_registry() -> AsyncIterator[None]:
+    await reset_framework()
     registered = cast("list[object]", getattr(api, "_registered_agent_classes"))
     registered.clear()
     yield
-    reset_framework()
+    await reset_framework()
     registered.clear()
 
 
@@ -63,10 +63,10 @@ async def test_setup_and_shutdown_with_default_storage() -> None:
         max_concurrent=4,
         max_iterations=10,
     )
-    agent = api.get_agent("simple")
+    agent = await api.get_agent("simple")
     assert agent is not None
     assert agent.name == "simple"
-    names = api.list_agents()
+    names = await api.list_agents()
     assert "simple" in names
     await api.shutdown()
 
@@ -76,7 +76,7 @@ async def test_setup_with_explicit_storage() -> None:
 
     storage = MemoryStorage()
     await api.setup(storage=storage, max_concurrent=4, max_iterations=10)
-    assert api.get_agent("nonexistent") is None
+    assert await api.get_agent("nonexistent") is None
     await api.shutdown()
 
 
@@ -88,7 +88,7 @@ async def test_set_agent_strategy() -> None:
         max_iterations=10,
     )
     compactor = NoopContextCompactor()
-    api.set_agent_strategy(
+    await api.set_agent_strategy(
         StrategyKind.CONTEXT_COMPACTION,
         "simple",
         compactor,

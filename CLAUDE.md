@@ -82,3 +82,24 @@ src/agent/
 - 全异步（async/await），不使用同步阻塞调用
 - LLM profile_id 格式：`provider:model`（如 `openai:gpt-4o-mini`）
 - 自定义 Tool 需实现 `name`、`description`、`parameters_schema` 属性和 `execute()` 方法
+
+### Import 规范（防止循环依赖）
+
+`core/` 内部子包之间的导入**必须**指向具体子模块文件，**禁止**从包级 `__init__.py` 导入。`__init__.py` 仅供外部消费者（`src/agent/` 顶层、tests、用户代码）使用。
+
+```python
+# 正确 — 直接导入叶子模块
+from agent.core.tools.types import ToolCallPayload, ToolResult
+from agent.core.session.types import ContextBudget
+
+# 错误 — 通过 __init__.py 导入（会触发整个子包的导入链，引发循环依赖）
+from agent.core.tools import ToolCallPayload
+from agent.core.session import ContextBudget
+```
+
+叶子类型模块（仅依赖 `typing`/`pydantic`，无内部互相引用）：
+- `agent/core/tools/types.py` — `ToolCallPayload`, `ToolFunctionPayload`, `ToolResult`
+- `agent/core/session/types.py` — `ContextBudget`, `SessionMetadataData`, `SessionData`
+- `agent/core/llm/types.py` — `LLMStreamChunk`, `ProviderUsage`
+
+如果 Pydantic 模型字段引用了其他模型类型，该类型**必须**在运行时可用（不能放在 `TYPE_CHECKING` 块中），否则 Pydantic 无法解析 forward reference。

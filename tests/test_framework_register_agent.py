@@ -63,9 +63,9 @@ class _AnotherAgent(BaseAgent):
 
 
 @pytest.fixture(autouse=True)
-def cleanup_framework():
+async def cleanup_framework():
     yield
-    reset_framework()
+    await reset_framework()
 
 
 @pytest.fixture

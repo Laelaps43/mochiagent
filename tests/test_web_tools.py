@@ -67,7 +67,10 @@ async def test_web_fetch_success_200() -> None:
     tool = WebFetchTool()
     fake_resp = _FakeResponse(200, text="<html>hello</html>")
     client = _FakeAsyncClient(fake_resp)
-    with patch("httpx.AsyncClient", return_value=client):
+    with (
+        patch("agent.common.tools.web_fetch_tool._is_private_ip", return_value=False),
+        patch("httpx.AsyncClient", return_value=client),
+    ):
         result = await tool.execute(url="https://example.com")
     assert isinstance(result, WebFetchSuccess)
     assert result.success is True
@@ -79,7 +82,10 @@ async def test_web_fetch_404_returns_failure() -> None:
     tool = WebFetchTool()
     fake_resp = _FakeResponse(404, text="Not Found", url="https://example.com/nope")
     client = _FakeAsyncClient(fake_resp)
-    with patch("httpx.AsyncClient", return_value=client):
+    with (
+        patch("agent.common.tools.web_fetch_tool._is_private_ip", return_value=False),
+        patch("httpx.AsyncClient", return_value=client),
+    ):
         result = await tool.execute(url="https://example.com/nope")
     assert isinstance(result, WebFetchSuccess)
     assert result.success is False
@@ -91,7 +97,10 @@ async def test_web_fetch_content_truncated() -> None:
     long_text = "A" * 1000
     fake_resp = _FakeResponse(200, text=long_text)
     client = _FakeAsyncClient(fake_resp)
-    with patch("httpx.AsyncClient", return_value=client):
+    with (
+        patch("agent.common.tools.web_fetch_tool._is_private_ip", return_value=False),
+        patch("httpx.AsyncClient", return_value=client),
+    ):
         result = await tool.execute(url="https://example.com")
     assert isinstance(result, WebFetchSuccess)
     assert result.truncated is True
@@ -102,7 +111,10 @@ async def test_web_fetch_content_not_truncated() -> None:
     short_text = "short content"
     fake_resp = _FakeResponse(200, text=short_text)
     client = _FakeAsyncClient(fake_resp)
-    with patch("httpx.AsyncClient", return_value=client):
+    with (
+        patch("agent.common.tools.web_fetch_tool._is_private_ip", return_value=False),
+        patch("httpx.AsyncClient", return_value=client),
+    ):
         result = await tool.execute(url="https://example.com")
     assert isinstance(result, WebFetchSuccess)
     assert result.truncated is False

@@ -13,11 +13,11 @@ from agent.core.message.part import (
     UserTextInput,
     UserInput,
 )
-from agent.types import ToolCallPayload, ToolResult
+from agent.core.tools.types import ToolCallPayload, ToolResult
 
 
 def _tool_call(call_id: str = "call_1", name: str = "echo", args: str = "{}") -> ToolCallPayload:
-    from agent.types import ToolFunctionPayload
+    from agent.core.tools.types import ToolFunctionPayload
 
     return ToolCallPayload(
         id=call_id,

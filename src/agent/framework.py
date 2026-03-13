@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from types import TracebackType
-import threading
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from .base_agent import BaseAgent
 from .context import AgentContext
 from .core.bus import MessageBus
 from .core.loop import AgentEventLoop
@@ -18,9 +17,6 @@ from .core.llm import AdapterRegistry
 from .core.runtime import AgentStrategyManager
 from .core.utils import normalize_profile_id
 from .types import LLMConfig
-
-if TYPE_CHECKING:
-    from .base_agent import BaseAgent
 
 
 class AgentFramework:
@@ -129,7 +125,7 @@ class AgentFramework:
                 await self._setup_agent(agent)
             except Exception:
                 _ = self._agents.pop(agent.name, None)
-                agent._ctx = None  # pyright: ignore[reportPrivateUsage]
+                agent.unbind_context()
                 raise
 
             logger.info("Registered agent: {}", agent.name)
@@ -260,15 +256,11 @@ DEFAULT_MAX_ITERATIONS = 100
 
 
 class FrameworkRegistry:
-    """管理框架单例及重建策略。
-
-    使用 threading.Lock 而非 asyncio.Lock：get() 是同步方法，且临界区仅做
-    内存操作（无 I/O），不会阻塞事件循环。
-    """
+    """管理框架单例及重建策略。"""
 
     def __init__(self) -> None:
         self.instance: AgentFramework | None = None
-        self._lock: threading.Lock = threading.Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     @staticmethod
     def should_recreate_instance(
@@ -290,12 +282,12 @@ class FrameworkRegistry:
             return True
         return False
 
-    def get(
+    async def get(
         self,
         max_concurrent: int | None = None,
         max_iterations: int | None = None,
     ) -> AgentFramework:
-        with self._lock:
+        async with self._lock:
             resolved_max_concurrent = (
                 max_concurrent if max_concurrent is not None else DEFAULT_MAX_CONCURRENT
             )
@@ -335,8 +327,8 @@ class FrameworkRegistry:
             logger.info("Global framework instance re-created with new config")
             return self.instance
 
-    def reset(self) -> None:
-        with self._lock:
+    async def reset(self) -> None:
+        async with self._lock:
             if self.instance is not None and self.instance.is_running():
                 logger.warning(
                     "Resetting framework registry while framework is still running. "
@@ -349,17 +341,17 @@ class FrameworkRegistry:
 framework_registry = FrameworkRegistry()
 
 
-def get_framework(
+async def get_framework(
     max_concurrent: int | None = None,
     max_iterations: int | None = None,
 ) -> AgentFramework:
     """获取框架单例"""
-    return framework_registry.get(
+    return await framework_registry.get(
         max_concurrent=max_concurrent,
         max_iterations=max_iterations,
     )
 
 
-def reset_framework() -> None:
+async def reset_framework() -> None:
     """重置全局框架实例（主要用于测试）"""
-    framework_registry.reset()
+    await framework_registry.reset()

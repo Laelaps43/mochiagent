@@ -15,8 +15,8 @@ from typing import ClassVar, override
 
 from pydantic import BaseModel, ConfigDict
 
-from agent.core.storage import StorageProvider
-from agent.types import ToolResult
+from agent.core.storage.provider import StorageProvider
+from agent.core.tools.types import ToolResult
 
 
 class ToolResultPostProcessConfig(BaseModel):
@@ -35,7 +35,7 @@ class ToolResultPostProcessorStrategy(ABC):
         session_id: str,
         tool_result: ToolResult,
         tool_arguments: Mapping[str, object],
-        storage: StorageProvider,
+        storage: "StorageProvider",
     ) -> ToolResult:
         raise NotImplementedError
 
@@ -51,7 +51,7 @@ class ToolResultPostProcessor(ToolResultPostProcessorStrategy):
         session_id: str,
         tool_result: ToolResult,
         tool_arguments: Mapping[str, object],
-        storage: StorageProvider,
+        storage: "StorageProvider",
     ) -> ToolResult:
         result = tool_result.model_copy(deep=True)
 

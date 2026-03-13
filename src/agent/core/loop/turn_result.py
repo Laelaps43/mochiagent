@@ -5,7 +5,9 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from agent.core.compression import CompactionPayload
-from agent.types import ContextBudget, TokenUsage, ToolCallPayload
+from agent.types import TokenUsage
+from agent.core.session.types import ContextBudget
+from agent.core.tools.types import ToolCallPayload
 
 
 class LLMTurnResult(BaseModel):

@@ -8,6 +8,7 @@ from .errors import (
     LLMTransportError,
 )
 from .provider import AdapterRegistry
+from .types import LLMStreamChunk, ProviderUsage
 
 __all__ = [
     "LLMProvider",
@@ -16,4 +17,6 @@ __all__ = [
     "LLMRateLimitError",
     "LLMTransportError",
     "AdapterRegistry",
+    "LLMStreamChunk",
+    "ProviderUsage",
 ]

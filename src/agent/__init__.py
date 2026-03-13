@@ -6,15 +6,19 @@ from .core.bus import MessageBus
 from .core.llm import LLMProvider, AdapterRegistry
 from .core.loop import AgentEventLoop
 from .core.runtime import StrategyKind
+from .core.runtime import (
+    ToolResultPostProcessor,
+    ToolResultPostProcessConfig,
+    ToolResultPostProcessorStrategy,
+)
 from .core.session import SessionContext, SessionManager, SessionStateMachine
 from .core.storage import StorageProvider, MemoryStorage
 from .core.tools import (
     Tool,
+    ToolCallPayload,
     ToolExecutor,
     ToolRegistry,
-    ToolResultPostProcessor,
-    ToolResultPostProcessConfig,
-    ToolResultPostProcessorStrategy,
+    ToolResult,
 )
 from .core.compression import (
     ContextCompactor,
@@ -22,18 +26,15 @@ from .core.compression import (
     SummaryBuildResult,
     CompactorRunOptions,
 )
-from .core.message import UserInput, UserTextInput
+from .core.message import UserInput, UserTextInput, Message
 from .types import (
     Event,
     EventType,
     LLMConfig,
-    Message,
     MessageRole,
     SessionState,
     StreamChunk,
-    ToolCallPayload,
     ToolDefinition,
-    ToolResult,
 )
 from .framework import AgentFramework, get_framework
 from .framework import reset_framework as _reset_framework
@@ -59,9 +60,9 @@ def get_registered_agents() -> list[type[BaseAgent]]:
     return _registered_agent_classes.copy()
 
 
-def reset_framework() -> None:
+async def reset_framework() -> None:
     """重置全局框架实例（主要用于测试）"""
-    _reset_framework()
+    await _reset_framework()
     _registered_agent_classes.clear()
 
 
@@ -82,7 +83,7 @@ async def setup(
         max_concurrent: 消息总线最大并发
         max_iterations: 单次对话最大迭代轮数（LLM turn）
     """
-    framework = get_framework(
+    framework = await get_framework(
         max_concurrent=max_concurrent,
         max_iterations=max_iterations,
     )
@@ -111,27 +112,27 @@ async def setup(
             await framework.stop()
         except Exception as cleanup_exc:
             logger.warning("Failed to stop framework during setup cleanup: {}", cleanup_exc)
-        reset_framework()
+        await reset_framework()
         raise
 
 
-def get_agent(agent_name: str) -> BaseAgent | None:
+async def get_agent(agent_name: str) -> BaseAgent | None:
     """获取已注册的 Agent"""
-    framework = get_framework()
+    framework = await get_framework()
     if not framework.is_initialized():
         return None
     return framework.get_agent(agent_name)
 
 
-def list_agents() -> list[str]:
+async def list_agents() -> list[str]:
     """列出所有已注册的 Agent 名称"""
-    framework = get_framework()
+    framework = await get_framework()
     if not framework.is_initialized():
         return []
     return framework.list_agents()
 
 
-def set_agent_strategy(
+async def set_agent_strategy(
     kind: StrategyKind,
     agent_name: str,
     strategy: ContextCompactor | ToolResultPostProcessorStrategy,
@@ -139,7 +140,7 @@ def set_agent_strategy(
     compaction_options: CompactorRunOptions | None = None,
 ) -> None:
     """设置某个 Agent 使用的指定策略实例。"""
-    framework = get_framework()
+    framework = await get_framework()
     framework.strategy_manager.set(
         kind, agent_name, strategy, compaction_options=compaction_options
     )
@@ -147,9 +148,9 @@ def set_agent_strategy(
 
 async def shutdown() -> None:
     """关闭 Agent 系统"""
-    framework = get_framework()
+    framework = await get_framework()
     await framework.stop()
-    reset_framework()
+    await reset_framework()
 
 
 __version__ = "0.2.0"
@@ -190,6 +191,7 @@ __all__ = [
     "Tool",
     "ToolExecutor",
     "ToolRegistry",
+    # Core - Runtime
     "ToolResultPostProcessor",
     "ToolResultPostProcessConfig",
     "ToolResultPostProcessorStrategy",

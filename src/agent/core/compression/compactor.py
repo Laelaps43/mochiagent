@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, override
+from typing import override
 
 from loguru import logger
+
+from agent.core.llm.base import LLMProvider
+from agent.core.message.message import Message
+from agent.core.session.context import SessionContext
+from agent.core.session.types import ContextBudget
+from agent.types import Event, LLMConfig
 
 from .stage import CompactionStage
 from .types import (
@@ -16,13 +22,7 @@ from .types import (
     SummaryBuildResult,
 )
 
-if TYPE_CHECKING:
-    from agent.core.llm import LLMProvider
-    from agent.core.message import Message
-    from agent.core.session.context import SessionContext
-    from agent.types import ContextBudget, Event, LLMConfig
-
-EmitEvent = Callable[["Event"], Awaitable[None]]
+EmitEvent = Callable[[Event], Awaitable[None]]
 
 
 class ContextCompactor(ABC):

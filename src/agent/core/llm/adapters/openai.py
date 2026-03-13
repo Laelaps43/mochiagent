@@ -29,14 +29,9 @@ from agent.core.llm.errors import (
 )
 from agent.core.message import Message as InternalMessage
 from agent.core.security import redact_text
-from agent.types import (
-    LLMConfig,
-    LLMStreamChunk,
-    ProviderUsage,
-    ToolCallPayload,
-    ToolDefinition,
-    ToolFunctionPayload,
-)
+from agent.core.tools.types import ToolCallPayload, ToolFunctionPayload
+from agent.types import LLMConfig, ToolDefinition
+from agent.core.llm.types import LLMStreamChunk, ProviderUsage
 
 
 @dataclass(slots=True)
@@ -99,7 +94,7 @@ class OpenAIAdapter(LLMProvider):
     def _parse_error_body(body_text: str) -> tuple[str | None, str | None]:
         """从 JSON error body 中提取 provider_code 和 provider_message。"""
         try:
-            loaded: object = json.loads(body_text)  # pyright: ignore[reportAny]
+            loaded = cast(object, json.loads(body_text))
             if not isinstance(loaded, dict):
                 return None, None
             data = cast(dict[str, object], loaded)

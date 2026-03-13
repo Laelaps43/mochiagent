@@ -66,7 +66,7 @@ class WebSearchTool(Tool):
                 return ToolError(
                     error=f"Brave search failed: HTTP {response.status_code}",
                 )
-            raw_data: object = response.json()  # pyright: ignore[reportAny]
+            raw_data = cast(object, response.json())
             if not isinstance(raw_data, dict):
                 return ToolError(error="Unexpected response format")
             data = cast(dict[str, object], raw_data)

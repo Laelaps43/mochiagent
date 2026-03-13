@@ -6,8 +6,8 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field
 
-from agent.core.message import Message
-from agent.types import SessionMetadataData
+from agent.core.message.message import Message
+from agent.core.session.types import SessionMetadataData
 
 
 class ArtifactMetadata(BaseModel):
@@ -41,10 +41,6 @@ class StorageProvider(ABC):
     用户可以继承此类实现自定义存储后端
     例如：PostgreSQL, MongoDB, Redis, File 等
 
-    设计：
-    - 会话元数据和消息分开存储
-    - 支持增量保存消息
-    - 加载会话时主动加载历史消息
     """
 
     @abstractmethod
@@ -149,6 +145,7 @@ class StorageProvider(ABC):
         """
         pass
 
+    @abstractmethod
     async def save_artifact(
         self,
         session_id: str,
@@ -161,9 +158,9 @@ class StorageProvider(ABC):
 
         默认实现抛出 NotImplementedError，具体存储可按需覆盖。
         """
-        _ = (session_id, kind, content, metadata)
         raise NotImplementedError("save_artifact is not implemented")
 
+    @abstractmethod
     async def read_artifact(
         self,
         artifact_ref: str,
@@ -175,14 +172,13 @@ class StorageProvider(ABC):
 
         默认实现抛出 NotImplementedError，具体存储可按需覆盖。
         """
-        _ = (artifact_ref, offset, limit)
         raise NotImplementedError("read_artifact is not implemented")
 
+    @abstractmethod
     async def delete_artifacts(self, session_id: str) -> None:
         """
         删除会话相关的所有 artifact。
 
         默认实现抛出 NotImplementedError，具体存储可按需覆盖。
         """
-        _ = session_id
         raise NotImplementedError("delete_artifacts is not implemented")

@@ -6,13 +6,12 @@ import time
 from datetime import datetime, timezone
 from loguru import logger
 
-from agent.types import (
+from agent.types import SessionState, TokenUsage
+from agent.core.session.types import (
     ContextBudget,
     ContextBudgetSource,
     SessionData,
     SessionMetadataData,
-    SessionState,
-    TokenUsage,
 )
 from agent.core.utils import gen_id
 from agent.core.message import (
@@ -29,15 +28,6 @@ class SessionContext:
     """
     会话上下文 - 会话数据容器和消息构建器
 
-    职责：
-    1. 存储会话状态和配置
-    2. 维护消息列表
-    3. 提供消息构建方法（注意：不负责持久化）
-
-    注意：
-    - 消息构建后会自动加入 messages 列表
-    - 持久化由 SessionManager 负责
-    - 不应该直接修改 messages 列表，使用提供的方法
     """
 
     def __init__(
@@ -206,7 +196,7 @@ class SessionContext:
             agent_name=self.agent_name,
             context_budget=self.context_budget,
             message_count=len(self.messages),
-            messages=[msg.model_dump(mode="json") for msg in self.messages],
+            messages=list(self.messages),
             created_at=self.created_at.isoformat(),
             updated_at=self.updated_at.isoformat(),
         )

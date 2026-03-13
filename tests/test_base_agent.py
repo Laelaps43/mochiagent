@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Callable, final, override, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -83,10 +83,10 @@ class _ConcreteAgent(BaseAgent):
 
 
 @pytest.fixture(autouse=True)
-def _reset_framework() -> Iterator[None]:
-    reset_framework()
+async def _reset_framework() -> AsyncIterator[None]:
+    await reset_framework()
     yield
-    reset_framework()
+    await reset_framework()
 
 
 _ = _reset_framework

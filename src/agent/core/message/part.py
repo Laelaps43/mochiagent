@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, BaseModel as _PydanticBaseModel, Discriminator, Field
 
 from agent.core.utils import gen_id, now_ms
-from agent.types import ToolCallPayload, ToolResult
+from agent.core.tools.types import ToolCallPayload, ToolResult
 
 
 class TimeInfo(BaseModel):

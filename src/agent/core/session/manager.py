@@ -8,7 +8,8 @@ from loguru import logger
 
 from agent.core.bus import MessageBus
 from agent.core.message import Message, Part, UserInput
-from agent.types import Event, EventType, SessionMetadataData, SessionState, TokenUsage
+from agent.types import Event, EventType, SessionState, TokenUsage
+from agent.core.session.types import SessionMetadataData
 from agent.core.storage import StorageProvider, MemoryStorage
 from .context import SessionContext
 from .state import SessionStateMachine
@@ -18,18 +19,6 @@ class SessionManager:
     """
     会话管理器 - 管理所有会话的生命周期
 
-    职责：
-    1. 会话生命周期管理（创建、获取、删除）
-    2. 缓存管理（内存缓存 + 延迟加载）
-    3. 持久化管理（自动保存到 Storage）
-    4. 消息管理（创建消息 + 自动保存）
-    5. 状态管理（状态转换 + 状态机）
-    6. 监听器管理（会话级事件监听）
-
-    架构：
-    - 内存缓存：快速访问
-    - Storage：持久化层
-    - 并发安全：使用 Lock 保护
     """
 
     def __init__(

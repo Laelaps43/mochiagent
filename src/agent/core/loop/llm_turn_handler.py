@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from agent.core.compression import CompactionPayload, CompactionStage
 from agent.core.llm import AdapterRegistry
+from agent.core.llm.base import LLMProvider
 from agent.core.llm.errors import (
     LLMProviderError,
     is_context_overflow_error as _is_context_overflow,
 )
+from agent.core.llm.types import ProviderUsage
+from agent.core.loop._framework_protocol import FrameworkProtocol
 from agent.core.loop.turn_result import LLMTurnResult
 from agent.core.message import (
     Message as InternalMessage,
@@ -23,25 +25,18 @@ from agent.core.message import (
     TimeInfo,
 )
 from agent.core.message.info import AssistantMessageInfo
+from agent.core.runtime.strategy_manager import AgentStrategyManager
 from agent.core.session import SessionManager
+from agent.core.session.context import SessionContext
+from agent.core.session.types import ContextBudget, ContextBudgetSource
+from agent.core.tools.types import ToolCallPayload
 from agent.types import (
-    ContextBudget,
-    ContextBudgetSource,
     Event,
     EventType,
     LLMConfig,
-    ProviderUsage,
     SessionState,
     TokenUsage,
-    ToolCallPayload,
 )
-
-from agent.core.loop._framework_protocol import FrameworkProtocol
-
-if TYPE_CHECKING:
-    from agent.core.llm.base import LLMProvider
-    from agent.core.runtime.strategy_manager import AgentStrategyManager
-    from agent.core.session.context import SessionContext
 
 
 class LLMTurnHandler:

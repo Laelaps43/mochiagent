@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Generic, TypeVar
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Generic, TypeVar
 
 from loguru import logger
 
@@ -16,18 +16,16 @@ from agent.core.compression import (
     ContextCompactor,
     DefaultContextCompactor,
 )
-from agent.core.tools import (
+from agent.core.llm.base import LLMProvider
+from agent.core.session.context import SessionContext
+from agent.core.session.types import ContextBudget
+from agent.core.storage.provider import StorageProvider
+from .result_postprocessor import (
     ToolResultPostProcessor,
     ToolResultPostProcessorStrategy,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-    from agent.core.llm.base import LLMProvider
-    from agent.core.session.context import SessionContext
-    from agent.core.storage import StorageProvider
-    from agent.types import ContextBudget, Event, LLMConfig, ToolResult
+from agent.core.tools.types import ToolResult
+from agent.types import Event, LLMConfig
 
 S = TypeVar("S")
 

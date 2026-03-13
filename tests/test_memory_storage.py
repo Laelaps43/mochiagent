@@ -4,7 +4,7 @@ import pytest
 
 from agent.core.storage.memory import MemoryStorage
 from agent.core.message import Message, UserMessageInfo, TextPart, TimeInfo
-from agent.types import SessionMetadataData, ContextBudget
+from agent.core.session.types import SessionMetadataData, ContextBudget
 
 
 def _make_session_data(session_id: str = "sess_1") -> SessionMetadataData:

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
-if TYPE_CHECKING:
-    from agent.base_agent import BaseAgent
+from agent.base_agent import BaseAgent
 
 
 class FrameworkProtocol(Protocol):

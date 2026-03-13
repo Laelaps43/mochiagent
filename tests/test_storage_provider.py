@@ -7,7 +7,7 @@ import pytest
 
 from agent.core.message import Message
 from agent.core.storage.provider import ArtifactMetadata, ArtifactReadResult, StorageProvider
-from agent.types import SessionMetadataData
+from agent.core.session.types import SessionMetadataData
 
 
 _RawFn = Callable[..., Awaitable[object]]
@@ -56,8 +56,7 @@ class _ConcreteStorage(StorageProvider):
         raw = cast(_RawFn, vars(StorageProvider)["delete_messages"])
         _ = await raw(self, session_id)
 
-    # Artifact methods are optional (not abstract) — delegate to base to test
-    # that the default NotImplementedError bodies work.
+    # Artifact methods are abstract — implement to raise NotImplementedError
     @override
     async def save_artifact(
         self,
@@ -66,7 +65,7 @@ class _ConcreteStorage(StorageProvider):
         content: str,
         metadata: dict[str, object] | None = None,
     ) -> ArtifactMetadata:
-        return await super().save_artifact(session_id, kind, content, metadata)
+        raise NotImplementedError("save_artifact is not implemented")
 
     @override
     async def read_artifact(
@@ -75,11 +74,11 @@ class _ConcreteStorage(StorageProvider):
         offset: int = 0,
         limit: int = 50000,
     ) -> ArtifactReadResult:
-        return await super().read_artifact(artifact_ref, offset, limit)
+        raise NotImplementedError("read_artifact is not implemented")
 
     @override
     async def delete_artifacts(self, session_id: str) -> None:
-        await super().delete_artifacts(session_id)
+        raise NotImplementedError("delete_artifacts is not implemented")
 
 
 @pytest.fixture
@@ -103,7 +102,7 @@ async def test_delete_artifacts_raises(storage: _ConcreteStorage):
 
 
 async def test_abstract_pass_bodies_return_none(storage: _ConcreteStorage) -> None:
-    from agent.types import SessionMetadataData as _SMD, ContextBudget
+    from agent.core.session.types import SessionMetadataData as _SMD, ContextBudget
 
     session_data = _SMD(
         session_id="s1",

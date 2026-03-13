@@ -14,7 +14,8 @@ from agent.core.llm.errors import (
     LLMRateLimitError,
     LLMTransportError,
 )
-from agent.types import LLMConfig, LLMStreamChunk, ToolDefinition
+from agent.core.llm.types import LLMStreamChunk
+from agent.types import LLMConfig, ToolDefinition
 
 
 def _make_config(**kwargs: object) -> LLMConfig:

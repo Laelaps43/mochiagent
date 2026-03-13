@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import override
 
 from loguru import logger
 
-from typing import override
-
-from .types import SessionState
-
-if TYPE_CHECKING:
-    from .core.message import Message
-    from .core.session import SessionContext, SessionManager
-    from .types import Event
+from .core.message.message import Message
+from .core.session.context import SessionContext
+from .core.session.manager import SessionManager
+from .types import Event, SessionState
 
 
 class Session:

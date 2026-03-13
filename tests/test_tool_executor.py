@@ -11,7 +11,7 @@ from agent.core.tools.executor import ToolExecutor
 from agent.config.tools import ToolPolicyConfig, ToolSecurityConfig
 from agent.core.tools.policy import ToolPolicyEngine
 from agent.core.tools.registry import ToolRegistry
-from agent.types import ToolCallPayload, ToolFunctionPayload
+from agent.core.tools.types import ToolCallPayload, ToolFunctionPayload
 
 
 @final

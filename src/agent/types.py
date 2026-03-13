@@ -7,14 +7,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-import time
-from typing import Literal, override
+from typing import override
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
-
-from agent.core.utils import to_non_negative_int
-
-type JSON = str | int | float | bool | None | list[JSON] | dict[str, JSON]
 
 
 class MessageRole(str, Enum):
@@ -25,135 +20,6 @@ class MessageRole(str, Enum):
     ASSISTANT = "assistant"
     TOOL = "tool"
     COMPACTION = "compaction"
-
-
-class ToolFunctionPayload(BaseModel):
-    name: str = ""
-    arguments: str = ""
-
-
-class ToolCallPayload(BaseModel):
-    id: str = ""
-    type: Literal["function"] = "function"
-    function: ToolFunctionPayload = Field(default_factory=ToolFunctionPayload)
-
-
-class Message(BaseModel):
-    """标准消息格式"""
-
-    role: MessageRole
-    content: str
-    tool_calls: list[ToolCallPayload] | None = None
-    tool_call_id: str | None = None
-    name: str | None = None  # For tool responses
-
-
-class ToolResult(BaseModel):
-    """工具执行结果"""
-
-    tool_call_id: str
-    tool_name: str
-    result: object
-    """Tool execution output. Typically a dict, str, or list returned by Tool.execute()."""
-    error: str | None = None
-    success: bool = True
-    summary: str | None = None
-    artifact_ref: str | None = None
-    artifact_path: str | None = None
-    raw_size_chars: int | None = None
-    truncated: bool = False
-
-
-ContextBudgetSource = Literal["estimated", "provider"]
-
-
-class ContextBudget(BaseModel):
-    """上下文窗口预算快照"""
-
-    total_tokens: int | None = None
-    used_tokens: int = 0
-    remaining_tokens: int | None = None
-    input_tokens: int = 0
-    output_tokens: int = 0
-    reasoning_tokens: int = 0
-    source: ContextBudgetSource = "estimated"
-    updated_at_ms: int = Field(default_factory=lambda: int(time.time() * 1000))
-
-    def update(
-        self,
-        *,
-        total_tokens: int | None,
-        input_tokens: int,
-        output_tokens: int,
-        reasoning_tokens: int,
-        source: ContextBudgetSource,
-        updated_at_ms: int | None = None,
-    ) -> None:
-        """Update the context budget **in place**.
-
-        Mutates ``self`` rather than returning a new instance so that all holders
-        of a reference to this ``ContextBudget`` observe the change immediately.
-
-        ``updated_at_ms`` is stored as epoch-milliseconds (not seconds) to match
-        the precision used by provider usage events and to avoid floating-point
-        rounding in JavaScript consumers.
-        """
-        self.total_tokens = to_non_negative_int(total_tokens) if total_tokens is not None else None
-        self.input_tokens = to_non_negative_int(input_tokens)
-        self.output_tokens = to_non_negative_int(output_tokens)
-        self.reasoning_tokens = to_non_negative_int(reasoning_tokens)
-        self.used_tokens = self.input_tokens + self.output_tokens + self.reasoning_tokens
-        if self.total_tokens is None:
-            self.remaining_tokens = None
-        else:
-            self.remaining_tokens = max(self.total_tokens - self.used_tokens, 0)
-        self.source = "provider" if source == "provider" else "estimated"
-        self.updated_at_ms = updated_at_ms if updated_at_ms is not None else int(time.time() * 1000)
-
-
-class SessionMetadataData(BaseModel):
-    session_id: str
-    state: str
-    model_profile_id: str
-    agent_name: str
-    context_budget: ContextBudget
-    last_compaction_message_id: str | None = None
-    created_at: str
-    updated_at: str
-
-
-class SessionData(BaseModel):
-    session_id: str
-    state: str
-    model_profile_id: str
-    agent_name: str
-    context_budget: ContextBudget
-    message_count: int
-    messages: list[object]
-    created_at: str
-    updated_at: str
-
-
-class TokenUsage(BaseModel):
-    input_tokens: int = 0
-    output_tokens: int = 0
-    reasoning_tokens: int = 0
-
-
-class ProviderUsage(BaseModel):
-    """LLM 供应商返回的 token 用量（统一命名，由 adapter 负责映射）"""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-    reasoning_tokens: int = 0
-
-
-class LLMStreamChunk(BaseModel):
-    content: str = ""
-    thinking: str = ""
-    tool_calls: list[ToolCallPayload] = Field(default_factory=list)
-    finish_reason: str = ""
-    usage: ProviderUsage | None = None
 
 
 class SessionState(str, Enum):
@@ -199,6 +65,12 @@ class Event(BaseModel):
     data: dict[str, object] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class TokenUsage(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
 
 
 class LLMConfig(BaseModel):
@@ -255,5 +127,5 @@ class StreamChunk(BaseModel):
     session_id: str
     content: str
     finish_reason: str | None = None
-    tool_calls: list[ToolCallPayload] | None = None
+    tool_calls: list[object] | None = None
     is_final: bool = False
