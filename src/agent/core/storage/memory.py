@@ -36,7 +36,7 @@ class MemoryStorage(StorageProvider):
     - _messages: 会话消息列表
     """
 
-    _SESSION_COUNT_WARNING_THRESHOLD: int = 500
+    SESSION_COUNT_WARNING_THRESHOLD: int = 500
 
     def __init__(self, artifact_root: str | Path | None = None):
         self._sessions: dict[str, SessionMetadataData] = {}
@@ -54,7 +54,7 @@ class MemoryStorage(StorageProvider):
     async def save_session(self, session_id: str, session_data: SessionMetadataData) -> None:
         self._sessions[session_id] = session_data
         count = len(self._sessions)
-        if count == self._SESSION_COUNT_WARNING_THRESHOLD:
+        if count == self.SESSION_COUNT_WARNING_THRESHOLD:
             logger.warning(
                 "MemoryStorage holds {} sessions — consider switching to a persistent StorageProvider",
                 count,
@@ -155,7 +155,7 @@ class MemoryStorage(StorageProvider):
         offset: int = 0,
         limit: int = 50000,
     ) -> ArtifactReadResult:
-        session_id, artifact_id = self._parse_artifact_ref(artifact_ref)
+        session_id, artifact_id = self.parse_artifact_ref(artifact_ref)
         content_path = self._artifact_root / session_id / f"{artifact_id}.txt"
 
         if not content_path.exists():
@@ -190,7 +190,7 @@ class MemoryStorage(StorageProvider):
             await asyncio.to_thread(shutil.rmtree, session_dir, True)
 
     @staticmethod
-    def _parse_artifact_ref(artifact_ref: str) -> tuple[str, str]:
+    def parse_artifact_ref(artifact_ref: str) -> tuple[str, str]:
         prefix = "artifact://"
         if not artifact_ref.startswith(prefix):
             raise ValueError(f"Invalid artifact_ref: {artifact_ref}")
