@@ -181,3 +181,60 @@ def test_tool_with_no_schema_always_allowed(workspace: Path):
 
     decision = guard.validate_tool_call(_NoSchema(), {"path": "/etc/passwd"})
     assert decision.allowed is True
+
+
+def test_non_dict_property_value_skipped(workspace: Path):
+    guard = ToolSecurityGuard(
+        root=workspace,
+        restrict=True,
+        config=ToolSecurityConfig(enforce_workspace=True),
+    )
+
+    @final
+    class _WeirdSchemaTool:
+        parameters_schema: dict[str, object] = {
+            "type": "object",
+            "properties": {"path": 42},
+        }
+
+    decision = guard.validate_tool_call(_WeirdSchemaTool(), {"path": "/etc/passwd"})
+    assert decision.allowed is True
+
+
+def test_restrict_false_shell_command_skips_workspace_check(workspace: Path, tmp_path: Path):
+    guard = ToolSecurityGuard(
+        root=workspace,
+        restrict=False,
+        config=ToolSecurityConfig(enforce_workspace=True, enforce_command_guard=True),
+    )
+    tool = _FakeCommandTool()
+    outside = str(tmp_path / "outside" / "file.txt")
+    decision = guard.validate_tool_call(tool, {"command": f"cat {outside}"})
+    assert decision.allowed is True
+
+
+def test_relative_slash_token_inside_workspace_allowed(guard: ToolSecurityGuard, workspace: Path):
+    tool = _FakeCommandTool()
+    (workspace / "subdir").mkdir()
+    decision = guard.validate_tool_call(tool, {"command": "cat subdir/file.txt"})
+    assert decision.allowed is True
+
+
+def test_home_path_outside_workspace_denied(guard: ToolSecurityGuard):
+    tool = _FakeCommandTool()
+    decision = guard.validate_tool_call(tool, {"command": "cat ~/somefile.txt"})
+    assert decision.allowed is False
+    assert "outside workspace root" in decision.reason
+
+
+def test_dotslash_relative_path_inside_workspace_allowed(guard: ToolSecurityGuard, workspace: Path):
+    (workspace / "sub").mkdir(exist_ok=True)
+    tool = _FakeCommandTool()
+    decision = guard.validate_tool_call(tool, {"command": "cat ./sub/file.txt"})
+    assert decision.allowed is True
+
+
+def test_malformed_command_invalid_command_token_denied(guard: ToolSecurityGuard):
+    tool = _FakeCommandTool()
+    decision = guard.validate_tool_call(tool, {"command": "echo 'unbalanced"})
+    assert decision.allowed is False

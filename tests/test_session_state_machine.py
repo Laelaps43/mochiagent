@@ -165,3 +165,25 @@ def test_can_transition_false_for_invalid_trigger(sm: SessionStateMachine):
 
 def test_can_transition_false_for_unknown_trigger(sm: SessionStateMachine):
     assert sm.can_transition("nonexistent_trigger") is False
+
+
+async def test_state_change_callback_exception_does_not_propagate():
+    async def bad_cb(_session_id: str, _from_state: str, _to_state: str) -> None:
+        raise RuntimeError("callback error")
+
+    sm = SessionStateMachine(session_id="bad-cb-session", on_state_change=bad_cb)
+    result = await sm.transition_to(SessionState.PROCESSING)
+    assert result is True
+    assert sm.current_state == SessionState.PROCESSING
+
+
+async def test_transition_raises_returns_false():
+    from unittest.mock import AsyncMock, patch
+
+    sm = SessionStateMachine(session_id="raise-session")
+    with patch.object(
+        sm, "start_processing", new_callable=AsyncMock, side_effect=RuntimeError("fail")
+    ):
+        result = await sm.transition_to(SessionState.PROCESSING)
+    assert result is False
+    assert sm.current_state == SessionState.IDLE
