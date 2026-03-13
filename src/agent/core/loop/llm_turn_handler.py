@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -80,7 +79,7 @@ class LLMTurnHandler:
 
         pre_compaction = await self._run_context_compaction(
             context=context,
-            budget=deepcopy(context.context_budget),
+            budget=context.context_budget.model_copy(deep=True),
             llm_config=llm_config,
             llm=llm,
             strategy_manager=agent.context.strategy_manager,
@@ -117,6 +116,7 @@ class LLMTurnHandler:
         finish_reason = None
 
         while True:
+            turn_tokens = TokenUsage()
             reasoning_buffer = ""
             reasoning_start_time = None
             entered_streaming_state = False
@@ -241,7 +241,7 @@ class LLMTurnHandler:
                 overflow_retries += 1
                 overflow_compaction = await self._run_context_compaction(
                     context=context,
-                    budget=deepcopy(context.context_budget),
+                    budget=context.context_budget.model_copy(deep=True),
                     llm_config=llm_config,
                     llm=llm,
                     strategy_manager=agent.context.strategy_manager,
@@ -251,6 +251,16 @@ class LLMTurnHandler:
                 compaction_events.append(overflow_compaction)
                 if not overflow_compaction.applied:
                     raise
+                await self._emit_event(
+                    Event(
+                        type=EventType.LLM_RETRY,
+                        session_id=session_id,
+                        data={
+                            "reason": "context_overflow",
+                            "retry_count": overflow_retries,
+                        },
+                    )
+                )
                 if context.current_message:
                     context.current_message.parts = []
                 await self._on_compaction_applied(context)
@@ -258,25 +268,28 @@ class LLMTurnHandler:
 
         if provider_usage:
             turn_tokens = TokenUsage(
-                input=provider_usage.input_tokens,
-                output=provider_usage.output_tokens,
-                reasoning=provider_usage.reasoning_tokens,
+                input_tokens=provider_usage.input_tokens,
+                output_tokens=provider_usage.output_tokens,
+                reasoning_tokens=provider_usage.reasoning_tokens,
             )
             source: ContextBudgetSource = "provider"
         else:
             turn_tokens = TokenUsage()
             source = "estimated"
-        assert isinstance(assistant_msg.info, AssistantMessageInfo)
+        if not isinstance(assistant_msg.info, AssistantMessageInfo):
+            raise TypeError(
+                f"Expected AssistantMessageInfo, got {type(assistant_msg.info).__name__}"
+            )
         assistant_info = assistant_msg.info
-        assistant_info.tokens.input += turn_tokens.input
-        assistant_info.tokens.output += turn_tokens.output
-        assistant_info.tokens.reasoning += turn_tokens.reasoning
+        assistant_info.tokens.input_tokens += turn_tokens.input_tokens
+        assistant_info.tokens.output_tokens += turn_tokens.output_tokens
+        assistant_info.tokens.reasoning_tokens += turn_tokens.reasoning_tokens
 
         context_budget: ContextBudget = context.update_context_budget(
             total_tokens=llm_config.context_window_tokens,
-            input_tokens=turn_tokens.input,
-            output_tokens=turn_tokens.output,
-            reasoning_tokens=turn_tokens.reasoning,
+            input_tokens=turn_tokens.input_tokens,
+            output_tokens=turn_tokens.output_tokens,
+            reasoning_tokens=turn_tokens.reasoning_tokens,
             source=source,
         )
         await self._persist_session_metadata(session_id)

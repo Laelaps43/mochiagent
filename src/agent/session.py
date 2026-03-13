@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from typing import override
+
 from .types import SessionState
 
 if TYPE_CHECKING:
@@ -40,8 +42,8 @@ class Session:
 
     @property
     def messages(self) -> list[Message]:
-        """获取消息历史"""
-        return self._context.messages
+        """获取消息历史（防御性拷贝）"""
+        return list(self._context.messages)
 
     @property
     def agent_name(self) -> str:
@@ -52,3 +54,11 @@ class Session:
     def model_profile_id(self) -> str | None:
         """获取会话绑定的模型 profile ID。"""
         return self._context.model_profile_id
+
+    @override
+    def __repr__(self) -> str:
+        return (
+            f"Session(session_id={self.session_id!r}, "
+            f"state={self.state.value!r}, "
+            f"agent={self.agent_name!r})"
+        )

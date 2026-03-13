@@ -14,17 +14,31 @@ class ToolPolicyConfig(BaseModel):
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    allow: set[str] = Field(default_factory=set)
-    deny: set[str] = Field(default_factory=set)
+    allow: set[str] | None = None
+    deny: set[str] | None = None
+
+    def normalized(self) -> "ToolPolicyConfig":
+        return ToolPolicyConfig(
+            allow={x.lower() for x in (self.allow or set())},
+            deny={x.lower() for x in (self.deny or set())},
+        )
 
     @classmethod
-    def from_csv(cls, *, allow_csv: str = "", deny_csv: str = "") -> "ToolPolicyConfig":
-        def parse(raw: str) -> set[str]:
+    def from_csv(
+        cls,
+        *,
+        allow_csv: str | None = None,
+        deny_csv: str | None = None,
+    ) -> "ToolPolicyConfig":
+        def _parse(raw: str | None) -> set[str]:
             if not raw:
                 return set()
-            return {item.strip() for item in raw.split(",") if item and item.strip()}
+            return {item.strip().lower() for item in raw.split(",") if item and item.strip()}
 
-        return cls(allow=parse(allow_csv), deny=parse(deny_csv))
+        return cls(
+            allow=_parse(allow_csv),
+            deny=_parse(deny_csv),
+        )
 
 
 class WorkspaceConfig(BaseModel):

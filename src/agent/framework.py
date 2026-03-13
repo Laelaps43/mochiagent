@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import TracebackType
+import threading
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -44,6 +46,7 @@ class AgentFramework:
         self._strategy_manager: AgentStrategyManager = AgentStrategyManager()
         self._initialized: bool = False
         self._started: bool = False
+        self._lock: asyncio.Lock = asyncio.Lock()
 
         logger.info(
             "AgentFramework created (max_concurrent={}, max_iterations={})",
@@ -94,40 +97,42 @@ class AgentFramework:
             RuntimeError: If framework not initialized
             ValueError: If agent is not BaseAgent instance or name conflicts
         """
-        if not self._initialized:
-            raise RuntimeError("Framework not initialized. Call initialize() first.")
+        async with self._lock:
+            if not self._initialized:
+                raise RuntimeError("Framework not initialized. Call initialize() first.")
 
-        if agent.name in self._agents:
-            raise ValueError(f"Agent '{agent.name}' already registered")
+            if agent.name in self._agents:
+                raise ValueError(f"Agent '{agent.name}' already registered")
 
-        normalized_allowed = self._normalize_allowed_profiles(agent.allowed_model_profiles)
+            normalized_allowed = self._normalize_allowed_profiles(agent.allowed_model_profiles)
 
-        # 过滤出 agent 可用的 llm_profiles
-        agent_llm_profiles = {
-            pid: cfg for pid, cfg in self._llm_profiles.items() if pid in normalized_allowed
-        }
+            # 过滤出 agent 可用的 llm_profiles
+            agent_llm_profiles = {
+                pid: cfg for pid, cfg in self._llm_profiles.items() if pid in normalized_allowed
+            }
 
-        if self.session_manager is None:
-            raise RuntimeError(
-                "Framework not initialized: session_manager is None. Call initialize() first."
+            if self.session_manager is None:
+                raise RuntimeError(
+                    "Framework not initialized: session_manager is None. Call initialize() first."
+                )
+            ctx = AgentContext(
+                session_manager=self.session_manager,
+                message_bus=self.bus,
+                strategy_manager=self._strategy_manager,
+                agent_name=agent.name,
+                llm_profiles=agent_llm_profiles,
             )
-        ctx = AgentContext(
-            session_manager=self.session_manager,
-            message_bus=self.bus,
-            strategy_manager=self._strategy_manager,
-            agent_name=agent.name,
-            llm_profiles=agent_llm_profiles,
-        )
-        agent.bind_context(ctx)
-        self._agents[agent.name] = agent
+            agent.bind_context(ctx)
+            self._agents[agent.name] = agent
 
-        try:
-            await self._setup_agent(agent)
-        except Exception:
-            _ = self._agents.pop(agent.name, None)
-            raise
+            try:
+                await self._setup_agent(agent)
+            except Exception:
+                _ = self._agents.pop(agent.name, None)
+                agent._ctx = None  # pyright: ignore[reportPrivateUsage]
+                raise
 
-        logger.info("Registered agent: {}", agent.name)
+            logger.info("Registered agent: {}", agent.name)
 
     def get_agent(self, agent_name: str) -> BaseAgent | None:
         return self._agents.get(agent_name)
@@ -141,6 +146,11 @@ class AgentFramework:
 
     def set_llm_configs(self, configs: list[LLMConfig]) -> None:
         """初始化设置 LLM 配置列表（profile_id = provider:model）。"""
+        if self._agents:
+            logger.warning(
+                "set_llm_configs called with {} agents already registered — existing agents will NOT see the new profiles",
+                len(self._agents),
+            )
         profiles: dict[str, LLMConfig] = {}
         for config in configs:
             profile_id = normalize_profile_id(f"{config.provider}:{config.model}")
@@ -180,7 +190,8 @@ class AgentFramework:
             raise
 
     async def unregister_agent(self, agent_name: str) -> None:
-        agent = self._agents.pop(agent_name, None)
+        async with self._lock:
+            agent = self._agents.pop(agent_name, None)
         if agent is not None:
             try:
                 await agent.cleanup()
@@ -190,33 +201,37 @@ class AgentFramework:
 
     async def start(self) -> None:
         """启动框架"""
-        if not self._initialized:
-            raise RuntimeError("Framework not initialized. Call initialize() first.")
+        async with self._lock:
+            if not self._initialized:
+                raise RuntimeError("Framework not initialized. Call initialize() first.")
 
-        if self._started:
-            logger.warning("Framework already started")
-            return
+            if self._started:
+                logger.warning("Framework already started")
+                return
 
-        await self.bus.start()
-        self._started = True
-        logger.info("Framework started")
+            await self.bus.start()
+            self._started = True
+            logger.info("Framework started")
 
     async def stop(self) -> None:
         """停止框架"""
-        if not self._started:
-            return
+        async with self._lock:
+            if not self._started:
+                return
 
-        # Clean up agents first so they can still publish events during cleanup
-        for agent in list(self._agents.values()):
-            try:
-                await agent.cleanup()
-            except Exception as exc:
-                logger.warning("Agent '{}' cleanup failed: {}", agent.name, exc)
+            # Clean up agents first so they can still publish events during cleanup
+            for agent in list(self._agents.values()):
+                try:
+                    await agent.cleanup()
+                except Exception as exc:
+                    logger.warning("Agent '{}' cleanup failed: {}", agent.name, exc)
 
-        await self.bus.stop()
+            await self.bus.stop()
 
-        self._started = False
-        logger.info("Framework stopped")
+            self._started = False
+            self._agents.clear()
+            self._initialized = False
+            logger.info("Framework stopped")
 
     def is_running(self) -> bool:
         """检查框架是否正在运行"""
@@ -245,10 +260,15 @@ DEFAULT_MAX_ITERATIONS = 100
 
 
 class FrameworkRegistry:
-    """管理框架单例及重建策略。"""
+    """管理框架单例及重建策略。
+
+    使用 threading.Lock 而非 asyncio.Lock：get() 是同步方法，且临界区仅做
+    内存操作（无 I/O），不会阻塞事件循环。
+    """
 
     def __init__(self) -> None:
         self.instance: AgentFramework | None = None
+        self._lock: threading.Lock = threading.Lock()
 
     @staticmethod
     def should_recreate_instance(
@@ -275,48 +295,55 @@ class FrameworkRegistry:
         max_concurrent: int | None = None,
         max_iterations: int | None = None,
     ) -> AgentFramework:
-        resolved_max_concurrent = (
-            max_concurrent if max_concurrent is not None else DEFAULT_MAX_CONCURRENT
-        )
-        resolved_max_iterations = max(
-            1, max_iterations if max_iterations is not None else DEFAULT_MAX_ITERATIONS
-        )
+        with self._lock:
+            resolved_max_concurrent = (
+                max_concurrent if max_concurrent is not None else DEFAULT_MAX_CONCURRENT
+            )
+            resolved_max_iterations = max(
+                1, max_iterations if max_iterations is not None else DEFAULT_MAX_ITERATIONS
+            )
 
-        if self.instance is None:
+            if self.instance is None:
+                self.instance = AgentFramework(
+                    max_concurrent=resolved_max_concurrent,
+                    max_iterations=resolved_max_iterations,
+                )
+                logger.info("Global framework instance created")
+                return self.instance
+
+            if not self.should_recreate_instance(
+                current=self.instance,
+                requested_max_concurrent=max_concurrent,
+                requested_max_iterations=max_iterations,
+                resolved_max_concurrent=resolved_max_concurrent,
+                resolved_max_iterations=resolved_max_iterations,
+            ):
+                return self.instance
+
+            if self.instance.is_initialized():
+                raise RuntimeError(
+                    "Framework already initialized, cannot apply new config "
+                    + f"(requested max_concurrent={resolved_max_concurrent}, "
+                    + f"max_iterations={resolved_max_iterations}). "
+                    + "Call reset_framework() first if you need different settings."
+                )
+
             self.instance = AgentFramework(
                 max_concurrent=resolved_max_concurrent,
                 max_iterations=resolved_max_iterations,
             )
-            logger.info("Global framework instance created")
+            logger.info("Global framework instance re-created with new config")
             return self.instance
-
-        if not self.should_recreate_instance(
-            current=self.instance,
-            requested_max_concurrent=max_concurrent,
-            requested_max_iterations=max_iterations,
-            resolved_max_concurrent=resolved_max_concurrent,
-            resolved_max_iterations=resolved_max_iterations,
-        ):
-            return self.instance
-
-        if self.instance.is_initialized():
-            raise RuntimeError(
-                "Framework already initialized, cannot apply new config " +
-                f"(requested max_concurrent={resolved_max_concurrent}, " +
-                f"max_iterations={resolved_max_iterations}). " +
-                "Call reset_framework() first if you need different settings."
-            )
-
-        self.instance = AgentFramework(
-            max_concurrent=resolved_max_concurrent,
-            max_iterations=resolved_max_iterations,
-        )
-        logger.info("Global framework instance re-created with new config")
-        return self.instance
 
     def reset(self) -> None:
-        self.instance = None
-        logger.warning("Global framework instance reset")
+        with self._lock:
+            if self.instance is not None and self.instance.is_running():
+                logger.warning(
+                    "Resetting framework registry while framework is still running. "
+                    + "Call framework.stop() first to ensure clean shutdown."
+                )
+            self.instance = None
+            logger.warning("Global framework instance reset")
 
 
 framework_registry = FrameworkRegistry()

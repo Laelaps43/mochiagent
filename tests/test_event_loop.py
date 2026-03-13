@@ -51,7 +51,7 @@ def _make_turn_result(
         thinking="assistant-thinking",
         tool_calls=tool_calls or [],
         finish_reason=finish_reason,
-        tokens=TokenUsage(input=3, output=5, reasoning=1),
+        tokens=TokenUsage(input_tokens=3, output_tokens=5, reasoning_tokens=1),
         context_budget=ContextBudget(total_tokens=1024, used_tokens=9, remaining_tokens=1015),
         context_compaction=CompactionPayload.noop(stage="turn"),
         context_compaction_events=[CompactionPayload.noop(stage="turn")],

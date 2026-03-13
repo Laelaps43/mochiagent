@@ -108,6 +108,17 @@ class ContextCompactor(ABC):
                 options.chars_per_token,
             )
 
+            if insert_idx == 0:
+                logger.warning(
+                    "Compaction bookmark position is 0 — no messages to compact, skipping"
+                )
+                return CompactionPayload(
+                    applied=False,
+                    reason="no_messages_to_compact",
+                    name=name,
+                    stage=stage_value,
+                )
+
             bookmark = InternalMessage.create_compaction(
                 session_id=session_id,
                 summary=summary_result.summary_text,

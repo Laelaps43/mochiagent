@@ -57,6 +57,7 @@ class AgentEventLoop:
         self.max_iterations: int = max(1, max_iterations)
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_locks_guard: asyncio.Lock = asyncio.Lock()
+        self._active_tasks: dict[str, asyncio.Task[None]] = {}
         self._llm_turn_handler: LLMTurnHandler = LLMTurnHandler(
             session_manager=session_manager,
             adapter_registry=adapter_registry,
@@ -76,7 +77,12 @@ class AgentEventLoop:
             await self.session_manager.emit_to_session_listeners(event.session_id, event)
 
     async def _handle_session_terminated(self, event: Event) -> None:
-        await self.remove_session_lock(event.session_id)
+        session_id = event.session_id
+        task = self._active_tasks.pop(session_id, None)
+        if task is not None and not task.done():
+            _ = task.cancel()
+            logger.info("Cancelled active conversation task for session {}", session_id)
+        await self.remove_session_lock(session_id)
 
     async def _get_session_lock(self, session_id: str) -> asyncio.Lock:
         async with self._session_locks_guard:
@@ -90,15 +96,23 @@ class AgentEventLoop:
         async with self._session_locks_guard:
             _ = self._session_locks.pop(session_id, None)
 
+    async def _try_cleanup_session_lock(self, session_id: str) -> None:
+        """Remove the session lock if it is not currently held."""
+        async with self._session_locks_guard:
+            lock = self._session_locks.get(session_id)
+            if lock is not None and not lock.locked():
+                del self._session_locks[session_id]
+
     async def cleanup_stale_locks(self) -> None:
         """Remove locks for sessions that are no longer in the session manager cache."""
+        active_ids = set(await self.session_manager.cached_session_ids())
         async with self._session_locks_guard:
-            active_ids = set(self.session_manager.cached_session_ids())
             stale = [sid for sid in self._session_locks if sid not in active_ids]
             for sid in stale:
                 del self._session_locks[sid]
             if stale:
                 logger.info("Cleaned up {} stale session locks", len(stale))
+        await self.session_manager.cleanup_stale_load_locks()
 
     async def _emit_error_and_done(
         self,
@@ -152,10 +166,19 @@ class AgentEventLoop:
         async with lock:
             try:
                 context = await self.session_manager.get_session(session_id)
+
+                # E-01: 从 ERROR 状态自动恢复到 IDLE，允许重新处理
+                if context.state == SessionState.ERROR:
+                    await self.session_manager.update_state(session_id, SessionState.IDLE)
+
                 if not context.messages or context.messages[-1].role != "user":
                     raise ValueError(
                         f"No user message found in context for session {session_id}. Please call context.build_user_message() first."
                     )
+
+                task = asyncio.current_task()
+                if task is not None:
+                    self._active_tasks[session_id] = task
 
                 await self._conversation_loop(session_id)
 
@@ -182,12 +205,17 @@ class AgentEventLoop:
                     hint=hint,
                 )
 
+            finally:
+                _ = self._active_tasks.pop(session_id, None)
+                await self._try_cleanup_session_lock(session_id)
+
     async def _conversation_loop(self, session_id: str) -> None:
         context = await self.session_manager.get_session(session_id)
         await self.session_manager.update_state(session_id, SessionState.PROCESSING)
 
         logger.info("Starting conversation loop for session {}", session_id)
 
+        entered_error_path = False
         try:
             iteration_count = 0
             all_compaction_events: list[CompactionPayload] = []
@@ -279,6 +307,7 @@ class AgentEventLoop:
             )
 
         except Exception:
+            entered_error_path = True
             await self.session_manager.update_state(session_id, SessionState.ERROR)
             # 关闭未完成的 assistant message，避免下次复用半成品消息
             try:
@@ -298,12 +327,11 @@ class AgentEventLoop:
             raise
 
         finally:
-            try:
-                ctx = await self.session_manager.get_session(session_id)
-                if ctx.state != SessionState.ERROR:
+            if not entered_error_path:
+                try:
                     await self.session_manager.update_state(session_id, SessionState.IDLE)
-            except Exception as exc:
-                logger.warning("Failed to reset session {} state to IDLE: {}", session_id, exc)
+                except Exception as exc:
+                    logger.warning("Failed to reset session {} state to IDLE: {}", session_id, exc)
 
     async def _execute_tools(
         self, session_id: str, tool_calls: list[ToolCallPayload]

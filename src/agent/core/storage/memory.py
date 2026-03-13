@@ -4,6 +4,7 @@ Memory Storage - 内存存储实现
 
 import asyncio
 import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -45,11 +46,31 @@ class MemoryStorage(StorageProvider):
         self._artifact_root: Path = (
             Path(artifact_root) if artifact_root else (Path.cwd() / ".agent" / "artifacts")
         )
-        self._artifact_root.mkdir(parents=True, exist_ok=True)
+        # 延迟到首次写入 artifact 时创建目录，避免 __init__ 中阻塞调用
         logger.info("MemoryStorage initialized")
         logger.warning(
             "MemoryStorage is a lightweight in-process backend and is not a complete production-grade persistence solution. Data is process-local and may be lost after restart."
         )
+
+    _SAFE_ID_RE: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9_\-]+$")
+
+    @staticmethod
+    def _validate_session_id(session_id: str) -> None:
+        """Validate session_id contains only safe characters for filesystem paths."""
+        if not MemoryStorage._SAFE_ID_RE.match(session_id):
+            raise ValueError(
+                f"Invalid session_id for artifact storage: {session_id!r}. "
+                + "Only alphanumeric, underscore and hyphen allowed."
+            )
+
+    @staticmethod
+    def _validate_artifact_id(artifact_id: str) -> None:
+        """Validate artifact_id contains only safe characters for filesystem paths."""
+        if not MemoryStorage._SAFE_ID_RE.match(artifact_id):
+            raise ValueError(
+                f"Invalid artifact_id: {artifact_id!r}. "
+                + "Only alphanumeric, underscore and hyphen allowed."
+            )
 
     @override
     async def save_session(self, session_id: str, session_data: SessionMetadataData) -> None:
@@ -91,7 +112,11 @@ class MemoryStorage(StorageProvider):
     async def save_message(self, session_id: str, message: Message) -> None:
         if session_id not in self._messages:
             self._messages[session_id] = []
-        self._messages[session_id].append(message)
+        msgs = self._messages[session_id]
+        if msgs and msgs[-1].message_id == message.message_id:
+            msgs[-1] = message
+        else:
+            msgs.append(message)
         msg_count = len(self._messages[session_id])
         if msg_count == self.MESSAGE_COUNT_WARNING_THRESHOLD:
             logger.warning(
@@ -132,10 +157,12 @@ class MemoryStorage(StorageProvider):
         content: str,
         metadata: dict[str, object] | None = None,
     ) -> ArtifactMetadata:
+        self._validate_session_id(session_id)
         session_dir = self._artifact_root / session_id
-        session_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(lambda: session_dir.mkdir(parents=True, exist_ok=True))
 
         artifact_id = f"{kind}_{int(time.time())}_{uuid4().hex[:8]}"
+        self._validate_artifact_id(artifact_id)
         content_path = session_dir / f"{artifact_id}.txt"
         meta_path = session_dir / f"{artifact_id}.json"
 
@@ -164,6 +191,7 @@ class MemoryStorage(StorageProvider):
         limit: int = 50000,
     ) -> ArtifactReadResult:
         session_id, artifact_id = self.parse_artifact_ref(artifact_ref)
+        self._validate_artifact_id(artifact_id)
         content_path = self._artifact_root / session_id / f"{artifact_id}.txt"
 
         if not content_path.exists():
@@ -193,6 +221,8 @@ class MemoryStorage(StorageProvider):
 
     @override
     async def delete_artifacts(self, session_id: str) -> None:
+        self._validate_session_id(session_id)
+        # Note: artifact_id validation is performed on individual operations
         session_dir = self._artifact_root / session_id
         if session_dir.exists():
             await asyncio.to_thread(shutil.rmtree, session_dir, True)

@@ -48,10 +48,6 @@ def _get_configs(mgr: MCPManager) -> dict[str, MCPServerConfig]:
     return cast(dict[str, MCPServerConfig], getattr(mgr, "_configs"))
 
 
-def _get_reconnect_locks(mgr: MCPManager) -> dict[str, asyncio.Lock]:
-    return cast(dict[str, asyncio.Lock], getattr(mgr, "_reconnect_locks"))
-
-
 def _get_server_tool_names(mgr: MCPManager) -> dict[str, list[str]]:
     return cast(dict[str, list[str]], getattr(mgr, "_server_tool_names"))
 
@@ -432,28 +428,30 @@ async def test_reconnect_server_closes_old_stack() -> None:
     assert result is True
 
 
-async def test_reconnect_server_lock_already_held() -> None:
+async def test_reconnect_server_concurrent_calls_serialized() -> None:
+    """Concurrent reconnect_server calls are serialized by the per-server lock."""
     mgr = _make_manager()
     cfg = _make_cfg()
     _get_configs(mgr)["s"] = cfg
     _ = mgr.register_server("s", cfg)
 
-    lock = asyncio.Lock()
-    _get_reconnect_locks(mgr)["s"] = lock
+    call_order: list[str] = []
 
-    fake_session = MagicMock()
-    _get_sessions(mgr)["s"] = fake_session
+    async def _fake_connect(name: str, _cfg: MCPServerConfig, _state: MCPServerState) -> int:
+        call_order.append(f"start-{name}")
+        await asyncio.sleep(0.02)
+        call_order.append(f"end-{name}")
+        return 1
 
-    async def _hold_lock() -> bool:
-        async with lock:
-            await asyncio.sleep(0.05)
-        return True
+    with patch.object(mgr, "_connect_single_server", side_effect=_fake_connect):
+        results = await asyncio.gather(
+            mgr.reconnect_server("s"),
+            mgr.reconnect_server("s"),
+        )
 
-    task = asyncio.create_task(_hold_lock())
-    await asyncio.sleep(0.01)
-    result = await mgr.reconnect_server("s")
-    await task
-    assert result is True
+    # Both calls should succeed (serialized, not concurrent)
+    assert all(results)
+    assert len(call_order) == 4
 
 
 async def test_connect_single_server_no_command_no_url() -> None:

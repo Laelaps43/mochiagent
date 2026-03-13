@@ -149,7 +149,6 @@ class StorageProvider(ABC):
         """
         pass
 
-    @abstractmethod
     async def save_artifact(
         self,
         session_id: str,
@@ -162,9 +161,9 @@ class StorageProvider(ABC):
 
         默认实现抛出 NotImplementedError，具体存储可按需覆盖。
         """
+        _ = (session_id, kind, content, metadata)
         raise NotImplementedError("save_artifact is not implemented")
 
-    @abstractmethod
     async def read_artifact(
         self,
         artifact_ref: str,
@@ -176,13 +175,14 @@ class StorageProvider(ABC):
 
         默认实现抛出 NotImplementedError，具体存储可按需覆盖。
         """
+        _ = (artifact_ref, offset, limit)
         raise NotImplementedError("read_artifact is not implemented")
 
-    @abstractmethod
     async def delete_artifacts(self, session_id: str) -> None:
         """
         删除会话相关的所有 artifact。
 
         默认实现抛出 NotImplementedError，具体存储可按需覆盖。
         """
+        _ = session_id
         raise NotImplementedError("delete_artifacts is not implemented")

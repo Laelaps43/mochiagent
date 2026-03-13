@@ -6,7 +6,7 @@ Session State Machine - 会话状态机
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Protocol, cast
+from typing import Protocol
 
 from loguru import logger
 from transitions.extensions.asyncio import AsyncMachine
@@ -95,6 +95,15 @@ class SessionStateMachine:
         {"trigger": "terminate", "source": "*", "dest": SessionState.TERMINATED.value},
     ]
 
+    # Dynamically built from TRANSITIONS so trigger_map stays in sync with the
+    # transition table.  Wildcard ("*") sources are excluded — they are handled
+    # separately (e.g. "terminate").
+    _TRIGGER_MAP: dict[tuple[SessionState, SessionState], str] = {
+        (SessionState(t["source"]), SessionState(t["dest"])): t["trigger"]
+        for t in TRANSITIONS
+        if t["source"] != "*"
+    }
+
     def __init__(
         self,
         session_id: str,
@@ -124,7 +133,10 @@ class SessionStateMachine:
 
         # 添加状态转换后的回调
         # transitions library types after_state_change as list[str] but accepts async callables at runtime
-        cast(list[object], self.machine.after_state_change).append(self._after_state_change)
+        hooks = self.machine.after_state_change
+        if not isinstance(hooks, list):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise TypeError(f"Expected list for after_state_change, got {type(hooks)}")
+        hooks.append(self._after_state_change)  # pyright: ignore[reportArgumentType]
 
         logger.info(
             "StateMachine created for session {}, initial state: {}", session_id, self.state
@@ -137,12 +149,9 @@ class SessionStateMachine:
 
         logger.info("Session {} state changed: {} -> {}", self.session_id, from_state, to_state)
 
-        # 调用外部回调
+        # 调用外部回调（不吞掉异常，让调用方感知发布失败）
         if self._on_state_change:
-            try:
-                await self._on_state_change(self.session_id, from_state, to_state)
-            except Exception as e:
-                logger.error("Error in state change callback: {}", e, exc_info=True)
+            await self._on_state_change(self.session_id, from_state, to_state)
 
     @property
     def current_state(self) -> SessionState:
@@ -176,28 +185,14 @@ class SessionStateMachine:
 
         # 已经在目标状态
         if current == new_state:
+            logger.debug("Session {} already in state {}, no-op", self.session_id, current.value)
             return True
-
-        # 查找可用的触发器
-        trigger_map = {
-            (SessionState.IDLE, SessionState.PROCESSING): "start_processing",
-            (SessionState.PROCESSING, SessionState.STREAMING): "start_streaming",
-            (SessionState.PROCESSING, SessionState.WAITING_TOOL): "wait_for_tool",
-            (SessionState.PROCESSING, SessionState.IDLE): "complete",
-            (SessionState.PROCESSING, SessionState.ERROR): "fail",
-            (SessionState.STREAMING, SessionState.WAITING_TOOL): "wait_for_tool",
-            (SessionState.STREAMING, SessionState.IDLE): "complete",
-            (SessionState.STREAMING, SessionState.ERROR): "fail",
-            (SessionState.WAITING_TOOL, SessionState.PROCESSING): "continue_processing",
-            (SessionState.WAITING_TOOL, SessionState.ERROR): "fail",
-            (SessionState.ERROR, SessionState.IDLE): "reset",
-        }
 
         # terminate 可从任何状态触发
         if new_state == SessionState.TERMINATED:
             trigger = "terminate"
         else:
-            trigger = trigger_map.get((current, new_state))
+            trigger = self._TRIGGER_MAP.get((current, new_state))
 
         if not trigger:
             logger.warning(

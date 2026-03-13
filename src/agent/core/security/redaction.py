@@ -25,10 +25,14 @@ _SENSITIVE_FIELD_NAMES = {
     "client_secret",
     "password",
     "private_key",
+    "credential",
+    "credentials",
+    "session_token",
+    "auth_token",
 }
 
 _KEY_VALUE_RE = re.compile(
-    r"(?i)\b(api[_-]?key|access[_-]?token|authorization|x[_-]?api[_-]?key|secret)\b(\s*[:=]\s*)([\"']?)([^\"'\s,}]{6,})\3"
+    r"(?i)\b(api[_-]?key|access[_-]?token|authorization|x[_-]?api[_-]?key|secret|password|credential)\b(\s*[:=]\s*)([\"']?)([^\"'\s,}]{6,})\3"
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+([A-Za-z0-9._\-]{6,})")
 
@@ -52,7 +56,12 @@ def _is_sensitive_key(key: object) -> bool:
     if not isinstance(key, str):
         return False
     normalized = key.strip().lower().replace("-", "_")
-    return normalized in _SENSITIVE_FIELD_NAMES
+    if normalized in _SENSITIVE_FIELD_NAMES:
+        return True
+    for substr in ("key", "secret", "token", "password", "credential"):
+        if substr in normalized:
+            return True
+    return False
 
 
 def redact_dict(data: object) -> object:

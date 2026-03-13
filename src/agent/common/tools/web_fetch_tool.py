@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 from typing import override
@@ -24,8 +25,8 @@ _BLOCKED_NETWORKS = [
 ]
 
 
-def _is_private_ip(host: str) -> bool:
-    """Check if a hostname resolves to a private/reserved IP address."""
+def _check_private_ip(host: str) -> bool:
+    """Check if a hostname resolves to a private/reserved IP address (sync)."""
     try:
         addr_infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
@@ -38,6 +39,11 @@ def _is_private_ip(host: str) -> bool:
             if ip in network:
                 return True
     return False
+
+
+async def _is_private_ip(host: str) -> bool:
+    """Async wrapper — runs blocking DNS resolution in a thread."""
+    return await asyncio.to_thread(_check_private_ip, host)
 
 
 class WebFetchTool(Tool):
@@ -83,35 +89,44 @@ class WebFetchTool(Tool):
         hostname = parsed.hostname or ""
         if not hostname:
             return ToolError(error="Invalid URL: missing hostname")
-        if _is_private_ip(hostname):
+        if await _is_private_ip(hostname):
             return ToolError(error="Access to private/internal addresses is blocked")
 
-        async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=False, max_redirects=0
-        ) as client:
-            current_url = url
-            response = await client.get(current_url)
-            for _ in range(5):
-                if not response.is_redirect:
-                    break
-                redirect_url = str(response.next_request.url) if response.next_request else ""
-                if not redirect_url:
-                    break
-                redirect_parsed = urlparse(redirect_url)
-                redirect_host = redirect_parsed.hostname or ""
-                if redirect_host and _is_private_ip(redirect_host):
-                    return ToolError(error="Redirect to private/internal address is blocked")
-                response = await client.get(redirect_url)
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout, follow_redirects=False, max_redirects=0
+            ) as client:
+                current_url = url
+                response = await client.get(current_url)
+                for _ in range(5):
+                    if not response.is_redirect:
+                        break
+                    redirect_url = str(response.next_request.url) if response.next_request else ""
+                    if not redirect_url:
+                        break
+                    redirect_parsed = urlparse(redirect_url)
+                    if redirect_parsed.scheme not in ("http", "https"):
+                        return ToolError(
+                            error=f"Redirect to unsupported scheme: {redirect_parsed.scheme}"
+                        )
+                    redirect_host = redirect_parsed.hostname or ""
+                    if redirect_host and await _is_private_ip(redirect_host):
+                        return ToolError(error="Redirect to private/internal address is blocked")
+                    response = await client.get(redirect_url)
 
-            text = response.text[: self.max_chars * 2]
-            output, truncated = truncate_text(text, self.max_chars)
-            content_type: str = response.headers.get("content-type", "")  # pyright: ignore[reportAny]
+                text = response.text[: self.max_chars * 2]
+                output, truncated = truncate_text(text, self.max_chars)
+                content_type: str = response.headers.get("content-type", "")  # pyright: ignore[reportAny]
 
-            return WebFetchSuccess(
-                success=response.status_code < 400,
-                url=str(response.url),
-                status_code=response.status_code,
-                content_type=content_type,
-                content=output,
-                truncated=truncated,
-            )
+                return WebFetchSuccess(
+                    success=response.status_code < 400,
+                    url=str(response.url),
+                    status_code=response.status_code,
+                    content_type=content_type,
+                    content=output,
+                    truncated=truncated,
+                )
+        except httpx.HTTPStatusError as exc:
+            return ToolError(error=f"HTTP error {exc.response.status_code}: {exc}")
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPError) as exc:
+            return ToolError(error=f"Request failed: {type(exc).__name__}: {exc}")

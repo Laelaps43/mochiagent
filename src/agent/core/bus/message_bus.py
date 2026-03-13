@@ -13,11 +13,13 @@ from agent.types import Event, EventType
 class MessageBus:
     """异步消息总线 - 支持事件订阅、发布和外部监听"""
 
-    def __init__(self, max_concurrent: int = 50, queue_timeout: float | None = None):
+    def __init__(
+        self, max_concurrent: int = 50, queue_timeout: float | None = None, queue_maxsize: int = 0
+    ):
         self._subscribers: dict[EventType, list[Callable[["Event"], Awaitable[None]]]] = (
             defaultdict(list)
         )
-        self._queue: asyncio.Queue[Event] = asyncio.Queue()
+        self._queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=queue_maxsize)
         self._running: bool = False
         self._process_task: asyncio.Task[None] | None = None
         self._max_concurrent: int = max_concurrent
@@ -30,12 +32,22 @@ class MessageBus:
     def subscribe(
         self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
     ) -> None:
+        """订阅指定事件类型。
+
+        应在 ``start()`` 之前调用，或确保在同一事件循环中调用。
+        ``_handle_event`` 已使用 ``list(...)`` 快照保护迭代安全。
+        """
         self._subscribers[event_type].append(handler)
         logger.debug("Subscribed to {}: {}", event_type.value, handler.__name__)
 
     def unsubscribe(
         self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
     ) -> None:
+        """取消订阅指定事件类型。
+
+        应在 ``start()`` 之前调用，或确保在同一事件循环中调用。
+        ``_handle_event`` 已使用 ``list(...)`` 快照保护迭代安全。
+        """
         if event_type in self._subscribers:
             try:
                 self._subscribers[event_type].remove(handler)
@@ -48,6 +60,8 @@ class MessageBus:
                 )
 
     async def publish(self, event: Event) -> None:
+        if not self._running:
+            logger.warning("Publishing event after MessageBus stopped: %s", event.type.value)
         await self._queue.put(event)
         logger.debug("Published event: {} for session {}", event.type.value, event.session_id)
 

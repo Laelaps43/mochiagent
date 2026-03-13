@@ -119,31 +119,28 @@ async def test_base_agent_abstract_members_are_callable() -> None:
 
     name_prop = cast(property, BaseAgent.__dict__["name"])
     description_prop = cast(property, BaseAgent.__dict__["description"])
-    skill_directory_prop = cast(property, BaseAgent.__dict__["skill_directory"])
     allowed_profiles_prop = cast(property, BaseAgent.__dict__["allowed_model_profiles"])
     name_getter = cast(Callable[[_ConcreteAgent], str | None], name_prop.fget)
     description_getter = cast(Callable[[_ConcreteAgent], str | None], description_prop.fget)
-    skill_directory_getter = cast(
-        Callable[[_ConcreteAgent], Path | None], skill_directory_prop.fget
-    )
     allowed_profiles_getter = cast(
         Callable[[_ConcreteAgent], set[str] | None], allowed_profiles_prop.fget
     )
 
     assert isinstance(name_prop, property)
     assert isinstance(description_prop, property)
-    assert isinstance(skill_directory_prop, property)
     assert isinstance(allowed_profiles_prop, property)
     assert name_prop.fget is not None
     assert description_prop.fget is not None
-    assert skill_directory_prop.fget is not None
     assert allowed_profiles_prop.fget is not None
 
     assert name_getter(agent) is None
     assert description_getter(agent) is None
-    assert skill_directory_getter(agent) is None
     assert allowed_profiles_getter(agent) is None
     assert await BaseAgent.setup(agent) is None
+
+    # skill_directory is no longer abstract — default returns None
+    assert BaseAgent.skill_directory.fget is not None  # type: ignore[attr-defined]
+    assert BaseAgent.skill_directory.fget(agent) is None  # type: ignore[attr-defined]
 
 
 def test_context_property_requires_binding_and_bind_context_works() -> None:

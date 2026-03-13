@@ -8,7 +8,8 @@ import pytest
 
 from agent.core.tools.base import Tool
 from agent.core.tools.executor import ToolExecutor
-from agent.core.tools.policy import ToolPolicyConfig, ToolPolicyEngine
+from agent.config.tools import ToolPolicyConfig, ToolSecurityConfig
+from agent.core.tools.policy import ToolPolicyEngine
 from agent.core.tools.registry import ToolRegistry
 from agent.types import ToolCallPayload, ToolFunctionPayload
 
@@ -182,8 +183,6 @@ async def test_execute_security_guard_blocks(tmp_path: Path):
         @override
         async def execute(self, **kwargs: object) -> object:
             return {}
-
-    from agent.core.tools.security_guard import ToolSecurityConfig
 
     reg = ToolRegistry()
     reg.register(_PathTool())

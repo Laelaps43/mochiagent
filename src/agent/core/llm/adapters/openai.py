@@ -57,6 +57,11 @@ class OpenAIAdapter(LLMProvider):
 
     def __init__(self, config: LLMConfig):
         super().__init__(config)
+        if config.openai_max_retries < 0:
+            logger.warning(
+                "openai_max_retries is negative ({}), clamping to 0",
+                config.openai_max_retries,
+            )
         self.openai_max_retries: int = max(0, config.openai_max_retries)
         self.client: AsyncOpenAI = AsyncOpenAI(
             api_key=config.api_key.get_secret_value() if config.api_key else None,
@@ -315,13 +320,25 @@ class OpenAIAdapter(LLMProvider):
         chunk: ChatCompletionChunk,
         accumulated_tool_calls: dict[int, ToolCallPayload],
     ) -> LLMStreamChunk | None:
+        result = LLMStreamChunk()
+        has_data = False
+
+        # 先提取 usage，因为最后一个 chunk 可能只有 usage 而没有 choices
+        usage = chunk.usage
+        if usage is not None:
+            details = usage.completion_tokens_details
+            result.usage = ProviderUsage(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                reasoning_tokens=details.reasoning_tokens or 0 if details else 0,
+            )
+            has_data = True
+
         choice = chunk.choices[0] if chunk.choices else None
         if not choice:
-            return None
+            return result if has_data else None
 
-        result = LLMStreamChunk()
         delta = choice.delta
-        has_data = False
 
         if delta:
             if delta.content:
@@ -346,16 +363,6 @@ class OpenAIAdapter(LLMProvider):
             if accumulated_tool_calls:
                 ordered_calls = [accumulated_tool_calls[k] for k in sorted(accumulated_tool_calls)]
                 result.tool_calls = ordered_calls
-
-        usage = chunk.usage
-        if usage is not None:
-            details = usage.completion_tokens_details
-            result.usage = ProviderUsage(
-                input_tokens=usage.prompt_tokens,
-                output_tokens=usage.completion_tokens,
-                reasoning_tokens=details.reasoning_tokens or 0 if details else 0,
-            )
-            has_data = True
 
         return result if has_data else None
 

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,8 +24,8 @@ class MessageBusConfig(BaseSettings):
         extra="ignore",
     )
 
-    queue_timeout: float = 1.0
-    max_concurrent: int = 50
+    queue_timeout: float = Field(default=1.0, gt=0)
+    max_concurrent: int = Field(default=50, ge=1)
 
 
 class SystemConfig(BaseSettings):
@@ -43,5 +44,5 @@ class SystemConfig(BaseSettings):
         extra="ignore",
     )
 
-    uuid_prefix_length: int = 16
-    default_session_state: str = "idle"
+    uuid_prefix_length: int = Field(default=16, ge=4, le=32)
+    default_session_state: Literal["idle"] = "idle"

@@ -166,6 +166,7 @@ async def test_register_agent_setup_failure_rolls_back_registry_entry() -> None:
 
     assert framework.get_agent("broken") is None
     assert framework.list_agents() == []
+    assert getattr(agent, "_ctx") is None
 
 
 def test_set_llm_configs_validates_adapters_and_conflicts() -> None:
@@ -213,18 +214,18 @@ async def test_start_stop_and_double_start_behaviors() -> None:
     agent = _FrameworkAgent(agent_name="alpha", allowed_profiles={"test:m1"})
     await framework.register_agent(agent)
 
-    await framework.stop()
-    assert framework.is_running() is False
-
     await framework.start()
     assert framework.is_running() is True
 
+    # double start is a no-op
     await framework.start()
     assert framework.is_running() is True
 
     await framework.stop()
 
     assert framework.is_running() is False
+    assert framework.is_initialized() is False
+    assert framework.list_agents() == []
     assert agent.cleanup_calls == 1
 
 

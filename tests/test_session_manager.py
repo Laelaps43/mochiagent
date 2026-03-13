@@ -257,7 +257,7 @@ async def test_finish_assistant_message_with_current(mgr: SessionManager):
     )
     await mgr.finish_assistant_message(
         "finish-sess",
-        tokens=TokenUsage(input=10, output=5),
+        tokens=TokenUsage(input_tokens=10, output_tokens=5),
         finish="stop",
     )
     ctx = await mgr.get_session("finish-sess")

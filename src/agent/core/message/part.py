@@ -2,9 +2,10 @@
 Part Models - Part 数据模型定义
 """
 
-from typing import Annotated, Literal, override
+import json
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Discriminator, Field
+from pydantic import BaseModel, BaseModel as _PydanticBaseModel, Discriminator, Field
 
 from agent.core.utils import gen_id, now_ms
 from agent.types import ToolCallPayload, ToolResult
@@ -23,18 +24,6 @@ class PartBase(BaseModel):
     id: str = Field(default_factory=lambda: gen_id("part_"))
     session_id: str
     message_id: str
-
-    def to_llm_format(self) -> dict[str, object] | None:
-        """
-        转换为 LLM 格式的贡献
-
-        返回 None 表示此 Part 不参与 LLM 消息构建
-        返回字典表示此 Part 对 LLM 消息的贡献
-
-        Returns:
-            None 或包含 type 和其他字段的字典
-        """
-        return None  # 默认不参与
 
 
 # ============ User Input (简单 DTO，无 id) ============
@@ -76,11 +65,6 @@ class TextPart(PartBase):
     time: TimeInfo = Field(default_factory=lambda: TimeInfo(start=now_ms()))
     metadata: dict[str, object] | None = None
 
-    @override
-    def to_llm_format(self) -> dict[str, object] | None:
-        """文本内容贡献给 LLM 消息的 content"""
-        return {"type": "text", "content": self.text}
-
 
 # ============ ReasoningPart - AI 思考过程 ============
 
@@ -92,11 +76,6 @@ class ReasoningPart(PartBase):
     text: str
     time: TimeInfo
     metadata: dict[str, object] | None = None
-
-    @override
-    def to_llm_format(self) -> dict[str, object] | None:
-        """思考过程不发送给 LLM（内部数据）"""
-        return None
 
 
 # ============ ToolPart - 工具调用 ============
@@ -194,16 +173,12 @@ class ToolPart(PartBase):
         Returns:
             更新后的 ToolPart
         """
-        import json
-
         # 优先使用后处理得到的摘要；未提供时回退到 result 序列化文本。
-        from pydantic import BaseModel as _BaseModel
-
         if result.summary is not None:
             output = result.summary
         elif isinstance(result.result, str):
             output = result.result
-        elif isinstance(result.result, _BaseModel):
+        elif isinstance(result.result, _PydanticBaseModel):
             output = json.dumps(result.result.model_dump(), ensure_ascii=False)
         else:
             try:
@@ -270,7 +245,7 @@ class ToolPart(PartBase):
                 metadata={
                     "tool_call_id": result.tool_call_id,
                     "tool_name": result.tool_name,
-                    "result": result.result,
+                    "result": str(result.result) if result.result is not None else None,
                     "error": result.error,
                     "success": result.success,
                 },
@@ -281,47 +256,6 @@ class ToolPart(PartBase):
             ),
             metadata=self.metadata,
         )
-
-    @override
-    def to_llm_format(self) -> dict[str, object] | None:
-        """
-        工具调用贡献给 LLM 消息
-
-        根据状态返回不同的内容：
-        - running/completed/error: 返回 tool_call
-        - completed: 额外返回 tool_result
-        - error: 额外返回 tool_result (错误信息)
-        """
-        result: dict[str, object] = {"type": "tool"}
-
-        # 1. tool_call（running、completed 或 error 状态）
-        if self.state.status in ["running", "completed", "error"]:
-            result["tool_call"] = {
-                "id": self.call_id,
-                "type": "function",
-                "function": {
-                    "name": self.tool,
-                    "arguments": self.state.input.arguments,
-                },
-            }
-
-        # 2. tool_result（completed 或 error 状态）
-        if self.state.status == "completed":
-            result["tool_result"] = {
-                "role": "tool",
-                "content": self.state.summary or self.state.output,
-                "tool_call_id": self.call_id,
-            }
-        elif self.state.status == "error":
-            error_state = self.state
-            error_msg = error_state.error or "Unknown error"
-            result["tool_result"] = {
-                "role": "tool",
-                "content": f"Error: {error_msg}",
-                "tool_call_id": self.call_id,
-            }
-
-        return result if len(result) > 1 else None  # 只有 type 时返回 None
 
 
 # ============ Part Union Type ============

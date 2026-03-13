@@ -114,7 +114,9 @@ class TestFinishCurrentMessage:
         _ = ctx.build_assistant_message(
             parent_id=user_msg.message_id, provider_id="openai", model_id="gpt-4"
         )
-        ctx.finish_current_message(tokens=TokenUsage(input=10, output=5), finish="stop")
+        ctx.finish_current_message(
+            tokens=TokenUsage(input_tokens=10, output_tokens=5), finish="stop"
+        )
         assert ctx.current_message is None
 
     def test_finish_without_current_no_error(self):

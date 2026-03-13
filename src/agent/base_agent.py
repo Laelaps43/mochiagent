@@ -8,9 +8,9 @@ from loguru import logger
 
 from .config import ToolRuntimeConfig
 from .core.mcp.manager import MCPManager
-from .core.tools import Tool, ToolRegistry, ToolExecutor, ToolSecurityConfig
+from .core.tools import Tool, ToolRegistry, ToolExecutor
 from .core.message import UserInput, UserTextInput
-from .common.skill import Skill
+from .common.skill import Skill, SkillLoader
 from .common.tools import SkillTool
 from .context import AgentContext
 from .types import Event
@@ -51,11 +51,7 @@ class BaseAgent(ABC):
             policy_deny=tool_runtime.policy.deny,
             workspace_root=tool_runtime.workspace.root,
             restrict_to_workspace=tool_runtime.workspace.restrict,
-            security=ToolSecurityConfig(
-                enforce_workspace=tool_runtime.security.enforce_workspace,
-                enforce_command_guard=tool_runtime.security.enforce_command_guard,
-                command_deny_tokens=tool_runtime.security.command_deny_tokens,
-            ),
+            security=tool_runtime.security,
         )
 
         # Skills registered by this agent
@@ -63,7 +59,7 @@ class BaseAgent(ABC):
         self._skill_tool: SkillTool | None = None  # 缓存统一的 skill tool
         self._mcp_manager: MCPManager | None = None
 
-        logger.info("{} initialized", self.__class__.__name__)
+        logger.debug("{} initialized", self.__class__.__name__)
 
     def bind_context(self, ctx: AgentContext) -> None:
         """
@@ -150,6 +146,11 @@ class BaseAgent(ABC):
         if not servers:
             return
 
+        # Close existing MCP manager before creating a new one
+        if self._mcp_manager is not None:
+            await self._mcp_manager.close()
+            self._mcp_manager = None
+
         manager = MCPManager(
             registry=self.tool_registry,
             default_timeout=self.tool_runtime.timeout,
@@ -193,7 +194,6 @@ class BaseAgent(ABC):
         return self._mcp_manager.snapshot()
 
     @property
-    @abstractmethod
     def skill_directory(self) -> Path | None:
         """
         Agent 的 skill 目录
@@ -208,7 +208,7 @@ class BaseAgent(ABC):
             >>> def skill_directory(self) -> Path:
             ...     return Path(__file__).parent / "skills"
         """
-        pass
+        return None
 
     @property
     @abstractmethod
@@ -249,8 +249,6 @@ class BaseAgent(ABC):
             raise ValueError(f"Agent {self.name} has no skill_directory")
 
         # 使用 agent 自己的 skill 目录
-        from .common.skill import SkillLoader
-
         loader = SkillLoader(self.skill_directory)
         skill = loader.load_skill(skill_name)
 
@@ -306,15 +304,28 @@ class BaseAgent(ABC):
 
         Raises:
             RuntimeError: If context not bound
+            ValueError: If session does not belong to this agent
         """
-        if self._ctx is None:
-            raise RuntimeError(f"Agent '{self.name}' context not bound")
+        ctx = self.context
+
+        # 验证 session 归属
+        session = await ctx.session_manager.get_session(session_id)
+        if session.agent_name != self.name:
+            logger.warning(
+                "Session {} belongs to agent '{}', not '{}'",
+                session_id,
+                session.agent_name,
+                self.name,
+            )
+            raise ValueError(
+                f"Session {session_id} belongs to agent '{session.agent_name}', not '{self.name}'"
+            )
 
         # 转换消息格式：如果是字符串，自动构建为 UserInput
         if isinstance(message, str):
             message = [UserTextInput(text=message)]
 
-        await self._ctx.send_message(session_id, message)
+        await ctx.send_message(session_id, message)
 
     async def take_session(
         self,
@@ -339,22 +350,21 @@ class BaseAgent(ABC):
             >>> session = await agent.take_session(session_id, "default")
             >>> await session.push_message("用户消息")
         """
-        if self._ctx is None:
-            raise RuntimeError(f"Agent '{self.name}' context not bound")
+        ctx = self.context
 
         resolved_model_profile_id = model_profile_id or self.default_model_profile
         if resolved_model_profile_id is None:
             raise ValueError("model_profile_id is required when taking a session")
 
-        # 先获取或创建 session
-        session = await self._ctx.get_session(
+        session = await ctx.get_session(
             self.name,
             session_id,
             model_profile_id=resolved_model_profile_id,
         )
 
-        # 再切换 session 到当前 agent
-        await self._ctx.switch_session_agent(session_id, self.name)
+        # 仅在 agent 实际变更时才切换，避免冗余存储写入和事件
+        if session.agent_name != self.name:
+            await ctx.switch_session_agent(session_id, self.name)
 
         return session
 
@@ -372,3 +382,7 @@ class BaseAgent(ABC):
         if self._mcp_manager:
             await self._mcp_manager.close()
             self._mcp_manager = None
+        self._registered_skills.clear()
+        self._skill_tool = None
+        self.tool_registry.clear()
+        self._ctx = None

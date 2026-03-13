@@ -116,6 +116,8 @@ class SessionContext:
 
     def apply_compaction(self, bookmark: Message, insert_idx: int) -> None:
         """将压缩书签插入消息列表并删除被压缩的旧消息。"""
+        if insert_idx < 0 or insert_idx > len(self.messages):
+            raise ValueError(f"insert_idx {insert_idx} out of range [0, {len(self.messages)}]")
         self.messages.insert(insert_idx, bookmark)
         del self.messages[:insert_idx]
         self.last_compaction_message_id = bookmark.message_id
@@ -138,7 +140,8 @@ class SessionContext:
     ) -> None:
         if self.current_message and isinstance(self.current_message.info, AssistantMessageInfo):
             self.current_message.info.completed_at = int(time.time() * 1000)
-            self.current_message.info.tokens = tokens or TokenUsage()
+            resolved_tokens = tokens or TokenUsage()
+            self.current_message.info.tokens = resolved_tokens
             self.current_message.info.finish = finish
             self.current_message = None
             self.updated_at = datetime.now(tz=timezone.utc)

@@ -155,6 +155,10 @@ class MCPManager:
 
         if state.consecutive_failures >= state.failure_threshold:
             _ = self._sessions.pop(server_name, None)
+            old_stack = self._server_stacks.pop(server_name, None)
+            if old_stack:
+                # Schedule async cleanup without blocking
+                _ = asyncio.get_event_loop().create_task(self._close_stack_safe(old_stack))
             state.next_retry_at = time.time() + state.cooldown_sec
             self.set_status(server_name, "failed")
             logger.warning(
@@ -174,11 +178,6 @@ class MCPManager:
     async def reconnect_server(self, server_name: str) -> bool:
         """Close old connection and rebuild for a single server. Returns True on success."""
         lock = self._reconnect_locks.setdefault(server_name, asyncio.Lock())
-        if lock.locked():
-            # Another coroutine is already reconnecting; wait and check result.
-            async with lock:
-                return self._sessions.get(server_name) is not None
-
         async with lock:
             cfg = self._configs.get(server_name)
             if cfg is None:
@@ -188,8 +187,8 @@ class MCPManager:
             if old_stack:
                 try:
                     await old_stack.aclose()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Failed to close old MCP stack: {}", exc)
             _ = self._sessions.pop(server_name, None)
             self._unregister_server_tools(server_name)
             # Reconnect
@@ -223,6 +222,13 @@ class MCPManager:
         self._sessions.clear()
         self.mark_disconnected()
 
+    async def _close_stack_safe(self, stack: AsyncExitStack) -> None:
+        """Close an AsyncExitStack, logging but suppressing errors."""
+        try:
+            await stack.aclose()
+        except Exception as exc:
+            logger.warning("Failed to close MCP stack during cleanup: {}", exc)
+
     async def connect_servers(self, servers: dict[str, MCPServerConfig]) -> int:
         """Connect MCP servers and register their tools.
 
@@ -232,11 +238,28 @@ class MCPManager:
         Returns:
             Total number of tools registered.
         """
-        registered = 0
         for server_name, cfg in servers.items():
             self._configs[server_name] = cfg
-            state = self.register_server(server_name, cfg)
-            registered += await self._connect_single_server(server_name, cfg, state)
+
+        async def _connect_one(name: str, cfg: MCPServerConfig) -> int:
+            state = self.register_server(name, cfg)
+            return await self._connect_single_server(name, cfg, state)
+
+        results = await asyncio.gather(
+            *(_connect_one(name, cfg) for name, cfg in servers.items()),
+            return_exceptions=True,
+        )
+
+        registered = 0
+        for server_name, result in zip(servers, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.error(
+                    "MCP server '{}' connect raised unexpected error: {}",
+                    server_name,
+                    result,
+                )
+            else:
+                registered += result
 
         return registered
 
@@ -361,6 +384,11 @@ class MCPManager:
         from mcp.client.streamable_http import streamable_http_client
 
         if cfg.command:
+            logger.info(
+                "MCP server: executing command: {} {}",
+                cfg.command,
+                cfg.args or [],
+            )
             params = StdioServerParameters(
                 command=cfg.command,
                 args=cfg.args or [],

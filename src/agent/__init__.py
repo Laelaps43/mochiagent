@@ -35,7 +35,8 @@ from .types import (
     ToolDefinition,
     ToolResult,
 )
-from .framework import AgentFramework, get_framework, reset_framework
+from .framework import AgentFramework, get_framework
+from .framework import reset_framework as _reset_framework
 from .base_agent import BaseAgent
 from .session import Session
 from .config import (
@@ -56,6 +57,12 @@ def agent(cls: type[BaseAgent]) -> type[BaseAgent]:
 
 def get_registered_agents() -> list[type[BaseAgent]]:
     return _registered_agent_classes.copy()
+
+
+def reset_framework() -> None:
+    """重置全局框架实例（主要用于测试）"""
+    _reset_framework()
+    _registered_agent_classes.clear()
 
 
 async def setup(
@@ -87,35 +94,47 @@ async def setup(
             "Using default MemoryStorage. This backend is for development/testing only and may be incomplete for production persistence. Please provide a custom StorageProvider in production."
         )
 
-    # 初始化框架
-    await framework.initialize(resolved_storage)
-    await framework.start()
+    try:
+        # 初始化框架
+        await framework.initialize(resolved_storage)
+        await framework.start()
 
-    if llm_configs:
-        framework.set_llm_configs(llm_configs)
+        if llm_configs:
+            framework.set_llm_configs(llm_configs)
 
-    # 注册所有 Agent（会自动调用 agent.setup()）
-    if agents:
-        for agent_instance in agents:
-            await framework.register_agent(agent_instance)
+        # 注册所有 Agent（会自动调用 agent.setup()）
+        if agents:
+            for agent_instance in agents:
+                await framework.register_agent(agent_instance)
+    except Exception:
+        try:
+            await framework.stop()
+        except Exception as cleanup_exc:
+            logger.warning("Failed to stop framework during setup cleanup: {}", cleanup_exc)
+        reset_framework()
+        raise
 
 
 def get_agent(agent_name: str) -> BaseAgent | None:
     """获取已注册的 Agent"""
     framework = get_framework()
+    if not framework.is_initialized():
+        return None
     return framework.get_agent(agent_name)
 
 
 def list_agents() -> list[str]:
     """列出所有已注册的 Agent 名称"""
     framework = get_framework()
+    if not framework.is_initialized():
+        return []
     return framework.list_agents()
 
 
 def set_agent_strategy(
     kind: StrategyKind,
     agent_name: str,
-    strategy: object,
+    strategy: ContextCompactor | ToolResultPostProcessorStrategy,
     *,
     compaction_options: CompactorRunOptions | None = None,
 ) -> None:
@@ -130,6 +149,7 @@ async def shutdown() -> None:
     """关闭 Agent 系统"""
     framework = get_framework()
     await framework.stop()
+    reset_framework()
 
 
 __version__ = "0.2.0"

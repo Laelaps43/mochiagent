@@ -3,6 +3,8 @@ Provider Registry - LLM提供商注册表
 管理和创建LLM提供商实例
 """
 
+import hashlib
+
 from loguru import logger
 
 from agent.types import LLMConfig
@@ -36,7 +38,12 @@ class AdapterRegistry:
 
     @staticmethod
     def _cache_key(config: LLMConfig) -> str:
-        api_key_hash = hash(config.api_key.get_secret_value()) if config.api_key else ""
+        if config.api_key:
+            api_key_hash = hashlib.sha256(config.api_key.get_secret_value().encode()).hexdigest()[
+                :32
+            ]
+        else:
+            api_key_hash = ""
         return f"{config.adapter}:{config.model}:{config.base_url}:{api_key_hash}"
 
     def get(self, config: LLMConfig) -> LLMProvider:
@@ -69,6 +76,10 @@ class AdapterRegistry:
         instance = provider_class(config)
         self._cache[key] = instance
         return instance
+
+    def clear_cache(self) -> None:
+        """清空适配器实例缓存"""
+        self._cache.clear()
 
     def list_adapters(self) -> list[str]:
         """列出所有已注册的适配器"""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from agent.core.tools.policy import PolicyDecision, ToolPolicyConfig, ToolPolicyEngine
+from agent.config.tools import ToolPolicyConfig
+from agent.core.tools.policy import PolicyDecision, ToolPolicyEngine
 
 
 class TestToolPolicyConfig:

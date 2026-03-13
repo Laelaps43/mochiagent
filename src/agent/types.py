@@ -8,9 +8,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 import time
-from typing import Literal
+from typing import Literal, override
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from agent.core.utils import to_non_negative_int
 
@@ -89,6 +89,15 @@ class ContextBudget(BaseModel):
         source: ContextBudgetSource,
         updated_at_ms: int | None = None,
     ) -> None:
+        """Update the context budget **in place**.
+
+        Mutates ``self`` rather than returning a new instance so that all holders
+        of a reference to this ``ContextBudget`` observe the change immediately.
+
+        ``updated_at_ms`` is stored as epoch-milliseconds (not seconds) to match
+        the precision used by provider usage events and to avoid floating-point
+        rounding in JavaScript consumers.
+        """
         self.total_tokens = to_non_negative_int(total_tokens) if total_tokens is not None else None
         self.input_tokens = to_non_negative_int(input_tokens)
         self.output_tokens = to_non_negative_int(output_tokens)
@@ -126,9 +135,9 @@ class SessionData(BaseModel):
 
 
 class TokenUsage(BaseModel):
-    input: int = 0
-    output: int = 0
-    reasoning: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
 
 
 class ProviderUsage(BaseModel):
@@ -145,14 +154,6 @@ class LLMStreamChunk(BaseModel):
     tool_calls: list[ToolCallPayload] = Field(default_factory=list)
     finish_reason: str = ""
     usage: ProviderUsage | None = None
-
-
-class LLMMessage(BaseModel):
-    role: str = ""
-    content: str = ""
-    tool_calls: list[ToolCallPayload] = Field(default_factory=list)
-    tool_call_id: str = ""
-    name: str = ""
 
 
 class SessionState(str, Enum):
@@ -184,9 +185,10 @@ class EventType(str, Enum):
     CONTEXT_COMPACTING = "context.compacting"
     CONTEXT_COMPACTED = "context.compacted"
 
-    # 错误事件
+    # LLM 事件
     LLM_ERROR = "llm.error"
     LLM_THINKING = "llm.thinking"
+    LLM_RETRY = "llm.retry"
 
 
 class Event(BaseModel):
@@ -207,7 +209,28 @@ class LLMConfig(BaseModel):
     model: str
     api_key: SecretStr | None = None
     base_url: str | None = None
-    temperature: float = 0.7
+
+    @override
+    def __repr__(self) -> str:
+        return (
+            f"LLMConfig(adapter={self.adapter!r}, provider={self.provider!r}, "
+            f"model={self.model!r}, api_key='***', base_url={self.base_url!r})"
+        )
+
+    @override
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not v.startswith(("http://", "https://")):
+            raise ValueError(f"base_url must start with http:// or https://, got: {v!r}")
+        return v
+
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int | None = None
     context_window_tokens: int | None = None
     stream: bool = True

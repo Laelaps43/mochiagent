@@ -376,9 +376,9 @@ async def test_run_accumulates_tool_calls_and_provider_usage() -> None:
     result = await handler.run(context.session_id)
 
     assert [tc.id for tc in result.tool_calls] == ["call-1", "call-2"]
-    assert result.tokens.input == 11
-    assert result.tokens.output == 22
-    assert result.tokens.reasoning == 3
+    assert result.tokens.input_tokens == 11
+    assert result.tokens.output_tokens == 22
+    assert result.tokens.reasoning_tokens == 3
     assert result.context_budget.source == "provider"
 
 

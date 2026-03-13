@@ -100,7 +100,7 @@ async def test_compactor_run_applies_when_should_compact_true() -> None:
         llm_config=_make_llm_config(),
         llm_provider=provider,
         stage=CompactionStage.OVERFLOW_ERROR,
-        options=CompactorRunOptions(),
+        options=CompactorRunOptions(keep_user_tokens_budget=0),
     )
     assert result.applied is True
     assert "overflow_error" in result.reason
@@ -124,7 +124,7 @@ async def test_compactor_run_emits_events() -> None:
         llm_config=_make_llm_config(),
         llm_provider=provider,
         stage=CompactionStage.OVERFLOW_ERROR,
-        options=CompactorRunOptions(),
+        options=CompactorRunOptions(keep_user_tokens_budget=0),
         emit_event=emit,
     )
     assert len(events) >= 2

@@ -56,6 +56,8 @@ class _ConcreteStorage(StorageProvider):
         raw = cast(_RawFn, vars(StorageProvider)["delete_messages"])
         _ = await raw(self, session_id)
 
+    # Artifact methods are optional (not abstract) — delegate to base to test
+    # that the default NotImplementedError bodies work.
     @override
     async def save_artifact(
         self,
@@ -64,10 +66,7 @@ class _ConcreteStorage(StorageProvider):
         content: str,
         metadata: dict[str, object] | None = None,
     ) -> ArtifactMetadata:
-        raw = cast(
-            "Callable[..., Awaitable[ArtifactMetadata]]", vars(StorageProvider)["save_artifact"]
-        )
-        return await raw(self, session_id, kind, content, metadata)
+        return await super().save_artifact(session_id, kind, content, metadata)
 
     @override
     async def read_artifact(
@@ -76,15 +75,11 @@ class _ConcreteStorage(StorageProvider):
         offset: int = 0,
         limit: int = 50000,
     ) -> ArtifactReadResult:
-        raw = cast(
-            "Callable[..., Awaitable[ArtifactReadResult]]", vars(StorageProvider)["read_artifact"]
-        )
-        return await raw(self, artifact_ref, offset, limit)
+        return await super().read_artifact(artifact_ref, offset, limit)
 
     @override
     async def delete_artifacts(self, session_id: str) -> None:
-        raw = cast("Callable[..., Awaitable[None]]", vars(StorageProvider)["delete_artifacts"])
-        await raw(self, session_id)
+        await super().delete_artifacts(session_id)
 
 
 @pytest.fixture

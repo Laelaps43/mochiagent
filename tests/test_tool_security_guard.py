@@ -5,7 +5,8 @@ from typing import final
 
 import pytest
 
-from agent.core.tools.security_guard import ToolSecurityConfig, ToolSecurityGuard
+from agent.config.tools import ToolSecurityConfig
+from agent.core.tools.security_guard import ToolSecurityGuard
 
 
 @final

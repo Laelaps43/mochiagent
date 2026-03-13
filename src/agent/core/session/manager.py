@@ -164,6 +164,18 @@ class SessionManager:
             self._session_load_locks[session_id] = lock
         return lock
 
+    async def _cleanup_session_load_lock(self, session_id: str) -> None:
+        """清理不再需要的 per-session 加载锁。
+
+        在 session 成功加载到缓存后调用。如果 lock 当前没被占用，
+        将其从 _session_load_locks 中移除以防止无界增长。
+        必须在 _cache_lock 内执行以保证安全。
+        """
+        async with self._cache_lock:
+            lock = self._session_load_locks.get(session_id)
+            if lock is not None and not lock.locked():
+                del self._session_load_locks[session_id]
+
     async def get_session(self, session_id: str) -> SessionContext:
         """获取会话（带缓存和延迟加载）
 
@@ -202,7 +214,9 @@ class SessionManager:
                 self._put_session_in_cache(session_id, context)
 
             logger.info("Loaded session from storage: {}", session_id)
-            return context
+
+        await self._cleanup_session_load_lock(session_id)
+        return context
 
     async def get_or_create_session(
         self,
@@ -252,6 +266,7 @@ class SessionManager:
                         session_id, context, model_profile_id
                     )
                     logger.info("Loaded session from storage: {}", session_id)
+                    await self._cleanup_session_load_lock(session_id)
                     return context
 
             # 创建新会话
@@ -266,7 +281,7 @@ class SessionManager:
 
                 try:
                     logger.info("Creating new session {}", session_id)
-                    return await self._create_and_save_session(
+                    context = await self._create_and_save_session(
                         session_id, model_profile_id, agent_name
                     )
                 except Exception as e:
@@ -276,6 +291,9 @@ class SessionManager:
                         del self._state_machines[session_id]
                     logger.error("Failed to save session {}: {}", session_id, e)
                     raise
+
+        await self._cleanup_session_load_lock(session_id)
+        return context
 
     async def _refresh_model_profile_if_needed(
         self,
@@ -291,9 +309,19 @@ class SessionManager:
         await self.storage.save_session(session_id, context.metadata)
         logger.info("Session {} model_profile_id refreshed: {}", session_id, model_profile_id)
 
-    def cached_session_ids(self) -> list[str]:
+    async def cached_session_ids(self) -> list[str]:
         """Return IDs of sessions currently in the in-memory cache."""
-        return list(self._cache.keys())
+        async with self._cache_lock:
+            return list(self._cache.keys())
+
+    async def cleanup_stale_load_locks(self) -> None:
+        """Remove per-session load locks for sessions no longer in cache."""
+        async with self._cache_lock:
+            stale = [sid for sid in self._session_load_locks if sid not in self._cache]
+            for sid in stale:
+                del self._session_load_locks[sid]
+            if stale:
+                logger.debug("Cleaned up {} stale session load locks", len(stale))
 
     async def delete_session(self, session_id: str) -> None:
         """删除会话"""
@@ -307,6 +335,7 @@ class SessionManager:
                     del self._state_machines[session_id]
 
                 del self._cache[session_id]
+            _ = self._session_load_locks.pop(session_id, None)
 
         # 2. 存储操作在锁外执行（避免阻塞其他操作）
         await self.storage.delete_session(session_id)
@@ -487,28 +516,16 @@ class SessionManager:
                         exc_info=result,
                     )
 
+            # 清理自身引用（在同一 task 内完成，无需 create_task）
+            async with self._listener_tasks_lock:
+                current = self._listener_tasks.get(session_id)
+                if current is asyncio.current_task():
+                    _ = self._listener_tasks.pop(session_id, None)
+
         async with self._listener_tasks_lock:
             previous = self._listener_tasks.get(session_id)
             task = asyncio.create_task(_deliver(previous))
             self._listener_tasks[session_id] = task
-
-        def _cleanup(done_task: asyncio.Task[None]) -> None:
-            if not done_task.cancelled():
-                _ = done_task.exception()
-
-            async def _safe_remove() -> None:
-                async with self._listener_tasks_lock:
-                    current = self._listener_tasks.get(session_id)
-                    if current is done_task:
-                        _ = self._listener_tasks.pop(session_id, None)
-
-            try:
-                loop = asyncio.get_running_loop()
-                _ = loop.create_task(_safe_remove())
-            except RuntimeError:
-                pass
-
-        task.add_done_callback(_cleanup)
 
     async def _on_state_change(self, session_id: str, from_state: str, to_state: str) -> None:
         """

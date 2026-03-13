@@ -17,8 +17,8 @@ from agent.core.compression.types import (
 )
 from agent.core.message import (
     Message as InternalMessage,
+    ReasoningPart,
     TextPart,
-    ToolPart,
     UserMessageInfo,
 )
 from agent.core.compression.stage import CompactionStage
@@ -135,7 +135,17 @@ class DefaultContextCompactor(ContextCompactor):
         retries = 0
         trimmed = 0
 
+        max_total_loops = options.summary_max_retries + options.summary_max_trims + 5
+        loop_count = 0
+
         while True:
+            loop_count += 1
+            if loop_count > max_total_loops:
+                return SummaryBuildResult.failure(
+                    error="max_total_loops_exceeded",
+                    trimmed_count=trimmed,
+                    retries=retries,
+                )
             try:
                 prompt_msg = InternalMessage(
                     info=UserMessageInfo(
@@ -204,17 +214,20 @@ class DefaultContextCompactor(ContextCompactor):
                     total_chars += len(part.text)
                     continue
 
-                if isinstance(part, ToolPart):
-                    arguments = part.state.input.arguments
-                    if arguments:
-                        total_chars += len(arguments)
+                if isinstance(part, ReasoningPart):
+                    total_chars += len(part.text)
+                    continue
 
-                    if part.state.status == "completed":
-                        total_chars += len(part.state.summary or part.state.output)
-                        continue
+                arguments = part.state.input.arguments
+                if arguments:
+                    total_chars += len(arguments)
 
-                    if part.state.status == "error":
-                        total_chars += len(part.state.error)
+                if part.state.status == "completed":
+                    total_chars += len(part.state.summary or part.state.output)
+                    continue
+
+                if part.state.status == "error":
+                    total_chars += len(part.state.error)
         return estimate_tokens(total_chars, chars_per_token)
 
     @staticmethod

@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-from typing import cast
 import pytest
 
 from agent.core.message.part import (
-    PartBase,
     TextPart,
     ReasoningPart,
     ToolPart,
-    ToolInput,
-    ToolStatePending,
     ToolStateRunning,
     ToolStateCompleted,
     ToolStateError,
@@ -48,25 +44,12 @@ def test_time_info_with_end() -> None:
     assert t.end == 2000
 
 
-def test_part_base_to_llm_format_returns_none() -> None:
-    base = PartBase(session_id="s", message_id="m")
-    assert base.to_llm_format() is None
-
-
 def test_text_part_basic() -> None:
     part = TextPart(session_id="s", message_id="m", text="hello world")
     assert part.text == "hello world"
     assert part.type == "text"
     assert part.synthetic is None
     assert part.ignored is None
-
-
-def test_text_part_to_llm_format() -> None:
-    part = TextPart(session_id="s", message_id="m", text="hi")
-    fmt = part.to_llm_format()
-    assert fmt is not None
-    assert fmt["type"] == "text"
-    assert fmt["content"] == "hi"
 
 
 def test_text_part_with_synthetic_ignored() -> None:
@@ -94,13 +77,6 @@ def test_user_text_input_metadata_preserved() -> None:
 
 def test_user_input_alias() -> None:
     assert UserInput is UserTextInput
-
-
-def test_reasoning_part_to_llm_format_none() -> None:
-    part = ReasoningPart(
-        session_id="s", message_id="m", text="thinking...", time=TimeInfo(start=1000)
-    )
-    assert part.to_llm_format() is None
 
 
 def test_reasoning_part_type() -> None:
@@ -240,67 +216,6 @@ def test_update_to_error_wrong_state_raises() -> None:
     errored = part.update_to_error(result)
     with pytest.raises(ValueError, match="expected 'running'"):
         _ = errored.update_to_error(result)
-
-
-def test_tool_part_running_to_llm_format() -> None:
-    part = _make_running_part()
-    fmt = part.to_llm_format()
-    assert fmt is not None
-    assert fmt["type"] == "tool"
-    assert "tool_call" in fmt
-    assert "tool_result" not in fmt
-
-
-def test_tool_part_completed_to_llm_format() -> None:
-    part = _make_running_part()
-    result = ToolResult(
-        tool_call_id="call_1",
-        tool_name="echo",
-        result="ok",
-        success=True,
-        summary="ok summary",
-    )
-    completed = part.update_to_completed(result)
-    fmt = completed.to_llm_format()
-    assert fmt is not None
-    assert "tool_call" in fmt
-    assert "tool_result" in fmt
-    tool_result = fmt["tool_result"]
-    assert isinstance(tool_result, dict)
-    tr = cast(dict[str, object], tool_result)
-    assert tr["role"] == "tool"
-    assert "ok summary" in str(tr["content"])
-
-
-def test_tool_part_error_to_llm_format() -> None:
-    part = _make_running_part()
-    result = ToolResult(
-        tool_call_id="call_1",
-        tool_name="echo",
-        result=None,
-        success=False,
-        error="boom",
-    )
-    errored = part.update_to_error(result)
-    fmt = errored.to_llm_format()
-    assert fmt is not None
-    assert "tool_result" in fmt
-    tool_result = fmt["tool_result"]
-    assert isinstance(tool_result, dict)
-    tr = cast(dict[str, object], tool_result)
-    assert "Error: boom" in str(tr["content"])
-
-
-def test_tool_part_pending_to_llm_format_returns_none() -> None:
-    part = ToolPart(
-        session_id="s",
-        message_id="m",
-        call_id="call_1",
-        tool="echo",
-        state=ToolStatePending(input=ToolInput(), raw="{}"),
-    )
-    fmt = part.to_llm_format()
-    assert fmt is None
 
 
 def test_update_to_completed_basemodel_result() -> None:

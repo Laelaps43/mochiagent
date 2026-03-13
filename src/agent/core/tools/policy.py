@@ -18,7 +18,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
-from agent.core.utils import parse_name_list
+from agent.config.tools import ToolPolicyConfig
 
 
 class PolicyDecision(BaseModel):
@@ -26,31 +26,6 @@ class PolicyDecision(BaseModel):
 
     allowed: bool
     reason: str
-
-
-class ToolPolicyConfig(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    allow: set[str] | None = None
-    deny: set[str] | None = None
-
-    def normalized(self) -> "ToolPolicyConfig":
-        return ToolPolicyConfig(
-            allow={x.lower() for x in (self.allow or set())},
-            deny={x.lower() for x in (self.deny or set())},
-        )
-
-    @classmethod
-    def from_csv(
-        cls,
-        *,
-        allow_csv: str | None = None,
-        deny_csv: str | None = None,
-    ) -> "ToolPolicyConfig":
-        return cls(
-            allow=parse_name_list(allow_csv),
-            deny=parse_name_list(deny_csv),
-        )
 
 
 class ToolPolicyEngine:

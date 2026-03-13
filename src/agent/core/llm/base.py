@@ -63,6 +63,7 @@ class LLMProvider(ABC):
                             }
                         )
 
+            # ReasoningPart 被有意跳过，因为大多数 LLM provider 不支持将 reasoning 内容回传到后续请求中。
             if not text_contents and not tool_calls:
                 continue
 

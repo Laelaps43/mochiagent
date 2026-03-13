@@ -4,13 +4,20 @@ Agent Context - Agent 运行上下文
 这个模块定义了 Agent 运行所需的外部依赖，封装了与 Framework 的交互。
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from agent.core.message import UserInput
 from loguru import logger
 from .core.bus import MessageBus
 from .core.utils import normalize_profile_id
 from .core.runtime import AgentStrategyManager
 from .core.session import SessionManager
-from .types import Event, EventType, LLMConfig
+from .types import Event, EventType, LLMConfig, SessionState
+
+if TYPE_CHECKING:
+    from .session import Session
 
 
 class AgentContext:
@@ -51,7 +58,14 @@ class AgentContext:
 
         return self.llm_profiles[normalized_profile]
 
-    async def get_session(self, agent_name: str, session_id: str, model_profile_id: str):
+    async def get_session(
+        self, agent_name: str, session_id: str, model_profile_id: str
+    ) -> "Session":
+        if agent_name != self.agent_name:
+            raise ValueError(
+                f"Agent context mismatch: expected '{self.agent_name}', got '{agent_name}'"
+            )
+
         from .session import Session
 
         context = await self.session_manager.get_or_create_session(
@@ -66,6 +80,15 @@ class AgentContext:
         session_id: str,
         message: list[UserInput],
     ) -> None:
+        session = await self.session_manager.get_session(session_id)
+
+        if session.state == SessionState.TERMINATED:
+            logger.warning("Cannot send message to terminated session {}", session_id)
+            raise ValueError(f"Session {session_id} is terminated")
+
+        if session.state == SessionState.PROCESSING:
+            logger.warning("Sending message to session {} while it is processing", session_id)
+
         _ = await self.session_manager.add_user_message(session_id, message)
 
         await self.message_bus.publish(

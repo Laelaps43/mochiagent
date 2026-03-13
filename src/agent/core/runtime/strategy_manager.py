@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from loguru import logger
 
@@ -43,8 +43,10 @@ class StrategySlot(Generic[S]):
         self._agents[agent_name.strip()] = strategy
 
     def get(self, agent_name: str | None = None) -> S:
-        if agent_name and agent_name in self._agents:
-            return self._agents[agent_name]
+        if agent_name:
+            stripped = agent_name.strip()
+            if stripped in self._agents:
+                return self._agents[stripped]
         return self._default
 
 
@@ -60,17 +62,23 @@ class AgentStrategyManager:
         self,
         kind: StrategyKind,
         agent_name: str,
-        strategy: object,
+        strategy: ContextCompactor | ToolResultPostProcessorStrategy,
         *,
         compaction_options: CompactorRunOptions | None = None,
     ) -> None:
         """Set a per-agent strategy instance by kind."""
         if kind == StrategyKind.CONTEXT_COMPACTION:
-            self._compaction.set(agent_name, cast(ContextCompactor, strategy))
+            if not isinstance(strategy, ContextCompactor):
+                raise TypeError(f"Expected ContextCompactor, got {type(strategy).__name__}")
+            self._compaction.set(agent_name, strategy)
             if compaction_options:
                 self._compaction_options[agent_name.strip()] = compaction_options
         elif kind == StrategyKind.TOOL_RESULT_POSTPROCESS:
-            self._postprocess.set(agent_name, cast(ToolResultPostProcessorStrategy, strategy))
+            if not isinstance(strategy, ToolResultPostProcessorStrategy):
+                raise TypeError(
+                    f"Expected ToolResultPostProcessorStrategy, got {type(strategy).__name__}"
+                )
+            self._postprocess.set(agent_name, strategy)
 
     async def run_compaction(
         self,

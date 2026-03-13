@@ -15,7 +15,9 @@ from typing import ClassVar
 
 from typing import cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
+
+from agent.config.tools import ToolSecurityConfig
 
 
 class SecurityDecision(BaseModel):
@@ -23,16 +25,6 @@ class SecurityDecision(BaseModel):
 
     allowed: bool
     reason: str
-
-
-class ToolSecurityConfig(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    enforce_workspace: bool = True
-    enforce_command_guard: bool = True
-    command_deny_tokens: set[str] = Field(
-        default_factory=lambda: {"`", "$(", "\n", "\r", ";", "&&", "||", "|", ">", ">>", "<"}
-    )
 
 
 class ToolSecurityGuard:

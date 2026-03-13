@@ -8,7 +8,8 @@ from .result_postprocessor import (
     ToolResultPostProcessorStrategy,
 )
 from .registry import ToolRegistry
-from .security_guard import ToolSecurityConfig, ToolSecurityGuard
+from .security_guard import ToolSecurityGuard
+from agent.config.tools import ToolSecurityConfig
 
 __all__ = [
     "Tool",
