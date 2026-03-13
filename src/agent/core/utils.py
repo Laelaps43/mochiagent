@@ -8,6 +8,7 @@ from agent.config.system import SystemConfig
 __all__ = [
     "to_non_negative_int",
     "to_int",
+    "parse_int",
     "gen_id",
     "now_ms",
     "estimate_tokens",
@@ -21,7 +22,7 @@ __all__ = [
 # ---- numeric helpers ----
 
 
-def _parse_int(value: object) -> int | None:
+def parse_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -37,14 +38,14 @@ def _parse_int(value: object) -> int | None:
 
 
 def to_non_negative_int(value: object, *, default: int = 0) -> int:
-    parsed = _parse_int(value)
+    parsed = parse_int(value)
     if parsed is None:
         return default
     return max(parsed, 0)
 
 
 def to_int(value: object, *, default: int = 0, minimum: int = 0) -> int:
-    parsed = _parse_int(value)
+    parsed = parse_int(value)
     if parsed is None:
         parsed = default
     return max(minimum, parsed)
