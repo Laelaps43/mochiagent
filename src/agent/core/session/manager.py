@@ -3,7 +3,6 @@
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import cast
 
 from loguru import logger
 
@@ -45,6 +44,7 @@ class SessionManager:
         self._state_machines: dict[str, SessionStateMachine] = {}
 
         self._cache_lock: asyncio.Lock = asyncio.Lock()
+        self._session_load_locks: dict[str, asyncio.Lock] = {}
 
         self._session_listeners: dict[str, list[Callable[[Event], Awaitable[None]]]] = {}
         self._listener_tasks: dict[str, asyncio.Task[None]] = {}
@@ -52,29 +52,28 @@ class SessionManager:
 
         logger.info("SessionManager initialized with {}", self.storage.__class__.__name__)
 
-    async def _load_session_into_cache(
+    async def _load_session_from_storage(
         self,
         session_id: str,
         session_data: SessionMetadataData,
     ) -> SessionContext:
-        """将存储中的会话数据反序列化并加入缓存（调用方需持有 _cache_lock）"""
+        """从存储中反序列化会话数据和消息（不访问缓存，可在锁外调用）"""
         context = SessionContext.from_snapshot(session_data)
-
         messages = await self.storage.load_messages(
             session_id, from_message_id=context.last_compaction_message_id
         )
         context.messages.extend(messages)
         logger.debug("Loaded {} messages for session {}", len(messages), session_id)
+        return context
 
+    def _put_session_in_cache(self, session_id: str, context: SessionContext) -> None:
+        """将会话写入缓存（调用方需持有 _cache_lock）"""
         state_machine = SessionStateMachine(
             session_id=session_id,
             on_state_change=self._on_state_change,
         )
-
         self._cache[session_id] = context
         self._state_machines[session_id] = state_machine
-
-        return context
 
     async def _create_and_save_session(
         self,
@@ -157,22 +156,50 @@ class SessionManager:
                 logger.error("Failed to create session {}: {}", session_id, e)
                 raise
 
+    def _get_session_load_lock(self, session_id: str) -> asyncio.Lock:
+        """获取或创建 per-session 加载锁。"""
+        lock = self._session_load_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_load_locks[session_id] = lock
+        return lock
+
     async def get_session(self, session_id: str) -> SessionContext:
-        """获取会话（带缓存和延迟加载）"""
+        """获取会话（带缓存和延迟加载）
+
+        使用两阶段加锁：全局锁仅用于缓存查找，per-session 锁保护存储加载，
+        避免全局锁长期持有阻塞其他会话。
+        """
+        # 快速路径：缓存命中
         async with self._cache_lock:
-            # 1. 检查缓存
             cached = self._cache.get(session_id)
             if cached is not None:
                 return cached
+            load_lock = self._get_session_load_lock(session_id)
 
-            # 2. 从存储加载
+        # 慢路径：per-session 锁保护存储加载
+        async with load_lock:
+            # double-check: 另一个协程可能已完成加载
+            async with self._cache_lock:
+                cached = self._cache.get(session_id)
+                if cached is not None:
+                    return cached
+
+            # 在锁外做存储 I/O
             session_data = await self.storage.load_session(session_id)
-
             if not session_data:
                 raise ValueError(f"Session {session_id} not found")
 
-            # 3. 反序列化、加载消息、加入缓存
-            context = await self._load_session_into_cache(session_id, session_data)
+            # 在锁外做反序列化和消息加载
+            context = await self._load_session_from_storage(session_id, session_data)
+
+            # 写入缓存
+            async with self._cache_lock:
+                # 再次 double-check
+                cached = self._cache.get(session_id)
+                if cached is not None:
+                    return cached
+                self._put_session_in_cache(session_id, context)
 
             logger.info("Loaded session from storage: {}", session_id)
             return context
@@ -187,42 +214,68 @@ class SessionManager:
         if not model_profile_id:
             raise ValueError("model_profile_id is required")
 
+        # 快速路径：缓存命中
         async with self._cache_lock:
-            # 1. 检查缓存
             cached = self._cache.get(session_id)
             if cached is not None:
                 logger.debug("Session {} found in cache", session_id)
                 await self._refresh_model_profile_if_needed(session_id, cached, model_profile_id)
                 return cached
+            load_lock = self._get_session_load_lock(session_id)
 
-            # 2. 尝试从 Storage 加载
+        # 慢路径：per-session 锁
+        async with load_lock:
+            async with self._cache_lock:
+                cached = self._cache.get(session_id)
+                if cached is not None:
+                    await self._refresh_model_profile_if_needed(
+                        session_id, cached, model_profile_id
+                    )
+                    return cached
+
+            # 锁外做存储 I/O
             if await self.storage.session_exists(session_id):
                 session_data = await self.storage.load_session(session_id)
                 if session_data:
-                    # 反序列化、加载消息、加入缓存
-                    context = await self._load_session_into_cache(session_id, session_data)
+                    context = await self._load_session_from_storage(session_id, session_data)
+                    async with self._cache_lock:
+                        # double-check
+                        cached = self._cache.get(session_id)
+                        if cached is not None:
+                            await self._refresh_model_profile_if_needed(
+                                session_id, cached, model_profile_id
+                            )
+                            return cached
+                        self._put_session_in_cache(session_id, context)
 
                     await self._refresh_model_profile_if_needed(
                         session_id, context, model_profile_id
                     )
-
                     logger.info("Loaded session from storage: {}", session_id)
                     return context
 
-            # 3. 在锁内创建新会话
-            try:
-                logger.info("Creating new session {}", session_id)
-                return await self._create_and_save_session(session_id, model_profile_id, agent_name)
+            # 创建新会话
+            async with self._cache_lock:
+                # 再次 double-check（可能在等锁期间被创建）
+                cached = self._cache.get(session_id)
+                if cached is not None:
+                    await self._refresh_model_profile_if_needed(
+                        session_id, cached, model_profile_id
+                    )
+                    return cached
 
-            except Exception as e:
-                # 回滚
-                if session_id in self._cache:
-                    del self._cache[session_id]
-                if session_id in self._state_machines:
-                    del self._state_machines[session_id]
-
-                logger.error("Failed to save session {}: {}", session_id, e)
-                raise
+                try:
+                    logger.info("Creating new session {}", session_id)
+                    return await self._create_and_save_session(
+                        session_id, model_profile_id, agent_name
+                    )
+                except Exception as e:
+                    if session_id in self._cache:
+                        del self._cache[session_id]
+                    if session_id in self._state_machines:
+                        del self._state_machines[session_id]
+                    logger.error("Failed to save session {}: {}", session_id, e)
+                    raise
 
     async def _refresh_model_profile_if_needed(
         self,
@@ -238,6 +291,10 @@ class SessionManager:
         await self.storage.save_session(session_id, context.metadata)
         logger.info("Session {} model_profile_id refreshed: {}", session_id, model_profile_id)
 
+    def cached_session_ids(self) -> list[str]:
+        """Return IDs of sessions currently in the in-memory cache."""
+        return list(self._cache.keys())
+
     async def delete_session(self, session_id: str) -> None:
         """删除会话"""
         # 1. 在锁内从缓存删除
@@ -246,8 +303,7 @@ class SessionManager:
                 # 终止状态机
                 if session_id in self._state_machines:
                     machine = self._state_machines[session_id]
-                    trigger = cast("Callable[[], Awaitable[None]]", getattr(machine, "terminate"))
-                    await trigger()
+                    _ = await machine.transition_to(SessionState.TERMINATED)
                     del self._state_machines[session_id]
 
                 del self._cache[session_id]

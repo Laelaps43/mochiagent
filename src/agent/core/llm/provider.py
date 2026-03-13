@@ -15,6 +15,7 @@ class AdapterRegistry:
 
     def __init__(self):
         self._providers: dict[str, type[LLMProvider]] = {}
+        self._cache: dict[str, LLMProvider] = {}
         self._register_defaults()
 
     def _register_defaults(self) -> None:
@@ -33,9 +34,14 @@ class AdapterRegistry:
         self._providers[name] = provider_class
         logger.debug("Registered LLM provider: {}", name)
 
+    @staticmethod
+    def _cache_key(config: LLMConfig) -> str:
+        api_key_hash = hash(config.api_key.get_secret_value()) if config.api_key else ""
+        return f"{config.adapter}:{config.model}:{config.base_url}:{api_key_hash}"
+
     def get(self, config: LLMConfig) -> LLMProvider:
         """
-        获取LLM适配器实例
+        获取LLM适配器实例（相同配置复用缓存实例）
 
         Args:
             config: LLM配置
@@ -54,8 +60,15 @@ class AdapterRegistry:
                 f"Adapter '{provider_name}' not found. Available adapters: {available}"
             )
 
+        key = self._cache_key(config)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+
         provider_class = self._providers[provider_name]
-        return provider_class(config)
+        instance = provider_class(config)
+        self._cache[key] = instance
+        return instance
 
     def list_adapters(self) -> list[str]:
         """列出所有已注册的适配器"""

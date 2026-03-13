@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -266,7 +266,8 @@ class LLMTurnHandler:
         else:
             turn_tokens = TokenUsage()
             source = "estimated"
-        assistant_info = cast(AssistantMessageInfo, assistant_msg.info)
+        assert isinstance(assistant_msg.info, AssistantMessageInfo)
+        assistant_info = assistant_msg.info
         assistant_info.tokens.input += turn_tokens.input
         assistant_info.tokens.output += turn_tokens.output
         assistant_info.tokens.reasoning += turn_tokens.reasoning
@@ -290,7 +291,7 @@ class LLMTurnHandler:
             thinking=thinking_buffer,
             tool_calls=accumulated_tool_calls,
             finish_reason=finish_reason,
-            tokens=cast(AssistantMessageInfo, assistant_msg.info).tokens,
+            tokens=assistant_info.tokens,
             context_budget=context_budget,
             context_compaction=last_compaction,
             context_compaction_events=compaction_events,

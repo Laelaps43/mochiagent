@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,16 +52,16 @@ class ToolRuntimeConfig(BaseSettings):
     """工具运行时配置
 
     环境变量示例:
-        MOCHI_TIMEOUT=60
-        MOCHI_MAX_BATCH_CONCURRENCY=20
-        MOCHI_EXEC_MAX_OUTPUT_CHARS=50000
-        MOCHI_WEB_FETCH_MAX_CHARS=30000
-        MOCHI_WEB_SEARCH_API_KEY=your-key-here
+        MOCHI_TOOL_TIMEOUT=60
+        MOCHI_TOOL_MAX_BATCH_CONCURRENCY=20
+        MOCHI_TOOL_EXEC_MAX_OUTPUT_CHARS=50000
+        MOCHI_TOOL_WEB_FETCH_MAX_CHARS=30000
+        MOCHI_TOOL_WEB_SEARCH_API_KEY=your-key-here
     """
 
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         frozen=True,
-        env_prefix="MOCHI_",
+        env_prefix="MOCHI_TOOL_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -74,4 +74,4 @@ class ToolRuntimeConfig(BaseSettings):
     security: ToolSecurityConfig = Field(default_factory=ToolSecurityConfig)
     exec_max_output_chars: int = 20000
     web_fetch_max_chars: int = 20000
-    web_search_api_key: str = ""
+    web_search_api_key: SecretStr = SecretStr("")

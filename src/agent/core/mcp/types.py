@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import ClassVar
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MCPServerState(BaseModel):
@@ -22,18 +24,26 @@ class MCPServerState(BaseModel):
 
 
 class MCPServerConfig(BaseModel):
+    """MCP server configuration.
+
+    Accepts both snake_case (Python) and camelCase (JSON config) field names
+    via ``populate_by_name=True`` + ``alias``.
+    """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(populate_by_name=True)
+
     command: str = ""
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     url: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
-    connectTimeoutMs: int | None = None
-    maxRetries: int | None = None
-    retryInitialMs: int | None = None
-    retryMaxMs: int | None = None
-    failureThreshold: int | None = None
-    cooldownSec: int | None = None
-    toolTimeout: int | None = None
+    connect_timeout_ms: int | None = Field(default=None, alias="connectTimeoutMs")
+    max_retries: int | None = Field(default=None, alias="maxRetries")
+    retry_initial_ms: int | None = Field(default=None, alias="retryInitialMs")
+    retry_max_ms: int | None = Field(default=None, alias="retryMaxMs")
+    failure_threshold: int | None = Field(default=None, alias="failureThreshold")
+    cooldown_sec: int | None = Field(default=None, alias="cooldownSec")
+    tool_timeout: int | None = Field(default=None, alias="toolTimeout")
 
 
 class MCPServerSnapshotConfig(BaseModel):

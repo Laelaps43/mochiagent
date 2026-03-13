@@ -37,6 +37,7 @@ class MemoryStorage(StorageProvider):
     """
 
     SESSION_COUNT_WARNING_THRESHOLD: int = 500
+    MESSAGE_COUNT_WARNING_THRESHOLD: int = 2000
 
     def __init__(self, artifact_root: str | Path | None = None):
         self._sessions: dict[str, SessionMetadataData] = {}
@@ -91,10 +92,17 @@ class MemoryStorage(StorageProvider):
         if session_id not in self._messages:
             self._messages[session_id] = []
         self._messages[session_id].append(message)
+        msg_count = len(self._messages[session_id])
+        if msg_count == self.MESSAGE_COUNT_WARNING_THRESHOLD:
+            logger.warning(
+                "Session {} has {} messages in MemoryStorage — consider enabling context compaction",
+                session_id,
+                msg_count,
+            )
         logger.debug(
             "Saved message to memory: {}, total messages: {}",
             session_id,
-            len(self._messages[session_id]),
+            msg_count,
         )
 
     @override

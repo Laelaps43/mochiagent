@@ -193,16 +193,24 @@ class SessionStateMachine:
             (SessionState.ERROR, SessionState.IDLE): "reset",
         }
 
-        trigger = trigger_map.get((current, new_state))
+        # terminate 可从任何状态触发
+        if new_state == SessionState.TERMINATED:
+            trigger = "terminate"
+        else:
+            trigger = trigger_map.get((current, new_state))
+
         if not trigger:
             logger.warning(
-                f"No valid transition from {current.value} to {new_state.value} for session {self.session_id}"
+                "No valid transition from {} to {} for session {}",
+                current.value,
+                new_state.value,
+                self.session_id,
             )
             return False
 
-        # 执行转换
+        # 执行转换（通过 machine.dispatch 避免 getattr 魔法方法）
         try:
-            await getattr(self, trigger)()
+            _ = await self.machine.dispatch(trigger, self)
             return True
         except Exception as e:
             logger.error("Failed to transition: {}", e, exc_info=True)

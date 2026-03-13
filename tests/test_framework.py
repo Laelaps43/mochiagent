@@ -196,7 +196,7 @@ async def test_unregister_agent_removes_registered_agent() -> None:
     agent = _FrameworkAgent(agent_name="alpha", allowed_profiles={"test:m1"})
     await framework.register_agent(agent)
 
-    framework.unregister_agent("alpha")
+    await framework.unregister_agent("alpha")
 
     assert framework.get_agent("alpha") is None
     assert framework.list_agents() == []
@@ -315,16 +315,13 @@ def test_framework_registry_get_creates_reuses_and_recreates_uninitialized_insta
     assert recreated.max_iterations == 1
 
 
-async def test_framework_registry_get_ignores_new_config_after_initialization() -> None:
+async def test_framework_registry_get_raises_on_config_conflict_after_initialization() -> None:
     registry = FrameworkRegistry()
     current = registry.get(max_concurrent=10, max_iterations=10)
     await current.initialize(MemoryStorage())
 
-    same = registry.get(max_concurrent=99, max_iterations=3)
-
-    assert same is current
-    assert same.max_concurrent == 10
-    assert same.max_iterations == 10
+    with pytest.raises(RuntimeError, match="Framework already initialized"):
+        _ = registry.get(max_concurrent=99, max_iterations=3)
 
 
 def test_get_framework_and_reset_framework_manage_module_singleton() -> None:

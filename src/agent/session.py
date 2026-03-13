@@ -1,5 +1,7 @@
 """会话包装类 - 用户友好的会话接口"""
 
+from __future__ import annotations
+
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 

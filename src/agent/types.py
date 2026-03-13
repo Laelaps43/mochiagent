@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field, SecretStr
 
 from agent.core.utils import to_non_negative_int
 
+type JSON = str | int | float | bool | None | list[JSON] | dict[str, JSON]
+
 
 class MessageRole(str, Enum):
     """消息角色"""

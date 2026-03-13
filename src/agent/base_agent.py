@@ -164,7 +164,7 @@ class BaseAgent(ABC):
                 config_path,
                 exc,
             )
-            return
+            raise RuntimeError(f"MCP registration failed for agent '{self.name}': {exc}") from exc
 
         if registered > 0:
             self._mcp_manager = manager
@@ -260,7 +260,10 @@ class BaseAgent(ABC):
         # 存储已注册的 skill
         self._registered_skills[skill.name] = skill
         logger.info(
-            f"Agent '{self.name}' registered skill '{skill.name}' from {self.skill_directory}"
+            "Agent '{}' registered skill '{}' from {}",
+            self.name,
+            skill.name,
+            self.skill_directory,
         )
 
         # 自动更新统一的 skill tool
@@ -283,7 +286,10 @@ class BaseAgent(ABC):
 
         skill_names = list(self._registered_skills.keys())
         logger.info(
-            f"Agent '{self.name}' updated skill tool with {len(self._registered_skills)} skills: {skill_names}"
+            "Agent '{}' updated skill tool with {} skills: {}",
+            self.name,
+            len(self._registered_skills),
+            skill_names,
         )
 
     async def push_message(
@@ -301,8 +307,8 @@ class BaseAgent(ABC):
         Raises:
             RuntimeError: If context not bound
         """
-        if not self._ctx:
-            raise RuntimeError(f"Agent {self.name} context not bound")
+        if self._ctx is None:
+            raise RuntimeError(f"Agent '{self.name}' context not bound")
 
         # 转换消息格式：如果是字符串，自动构建为 UserInput
         if isinstance(message, str):
@@ -333,8 +339,8 @@ class BaseAgent(ABC):
             >>> session = await agent.take_session(session_id, "default")
             >>> await session.push_message("用户消息")
         """
-        if not self._ctx:
-            raise RuntimeError(f"Agent {self.name} context not bound")
+        if self._ctx is None:
+            raise RuntimeError(f"Agent '{self.name}' context not bound")
 
         resolved_model_profile_id = model_profile_id or self.default_model_profile
         if resolved_model_profile_id is None:

@@ -317,7 +317,8 @@ async def test_register_mcp_tools_connect_exception_calls_close_and_returns(
         new=AsyncMock(side_effect=RuntimeError("conn failed")),
     ):
         with patch("agent.base_agent.MCPManager.close", new=AsyncMock()) as mock_close:
-            await agent.register_mcp_tools(path=mcp_json)
+            with pytest.raises(RuntimeError, match="MCP registration failed"):
+                await agent.register_mcp_tools(path=mcp_json)
 
     mock_close.assert_called_once()
     assert agent.get_mcp_status() == {}

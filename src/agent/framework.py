@@ -179,9 +179,13 @@ class AgentFramework:
             logger.error("Failed to setup agent '{}': {}", agent.name, e)
             raise
 
-    def unregister_agent(self, agent_name: str) -> None:
-        if agent_name in self._agents:
-            del self._agents[agent_name]
+    async def unregister_agent(self, agent_name: str) -> None:
+        agent = self._agents.pop(agent_name, None)
+        if agent is not None:
+            try:
+                await agent.cleanup()
+            except Exception as exc:
+                logger.warning("Agent '{}' cleanup failed during unregister: {}", agent_name, exc)
             logger.info("Unregistered agent: {}", agent_name)
 
     async def start(self) -> None:
@@ -202,13 +206,14 @@ class AgentFramework:
         if not self._started:
             return
 
-        await self.bus.stop()
-
+        # Clean up agents first so they can still publish events during cleanup
         for agent in list(self._agents.values()):
             try:
                 await agent.cleanup()
             except Exception as exc:
                 logger.warning("Agent '{}' cleanup failed: {}", agent.name, exc)
+
+        await self.bus.stop()
 
         self._started = False
         logger.info("Framework stopped")
@@ -222,6 +227,7 @@ class AgentFramework:
         return self._initialized
 
     async def __aenter__(self):
+        """Start the framework. Requires initialize() to have been called first."""
         await self.start()
         return self
 
@@ -294,12 +300,12 @@ class FrameworkRegistry:
             return self.instance
 
         if self.instance.is_initialized():
-            logger.warning(
-                "Framework already initialized, ignore new config (requested max_concurrent={}, max_iterations={})",
-                resolved_max_concurrent,
-                resolved_max_iterations,
+            raise RuntimeError(
+                "Framework already initialized, cannot apply new config " +
+                f"(requested max_concurrent={resolved_max_concurrent}, " +
+                f"max_iterations={resolved_max_iterations}). " +
+                "Call reset_framework() first if you need different settings."
             )
-            return self.instance
 
         self.instance = AgentFramework(
             max_concurrent=resolved_max_concurrent,

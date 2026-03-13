@@ -50,9 +50,7 @@ def test_role_system() -> None:
 
 
 def test_role_compaction() -> None:
-    msg = Message(
-        info=CompactionMessageInfo(id="cmp_1", session_id="sess_1")
-    )
+    msg = Message(info=CompactionMessageInfo(id="cmp_1", session_id="sess_1"))
     assert msg.role == "compaction"
 
 

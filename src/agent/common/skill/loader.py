@@ -29,10 +29,15 @@ class Skill:
         self.location: Path = location
 
     def render(self, context: str = "") -> str:
-        """Read skill content from disk and optionally substitute $ARGUMENTS."""
+        """Read skill content from disk and optionally substitute $ARGUMENTS.
+
+        Only the first occurrence of ``$ARGUMENTS`` in the template is replaced.
+        This prevents unexpected double-substitution if *context* itself contains
+        the literal string ``$ARGUMENTS``.
+        """
         content = frontmatter.load(str(self.location)).content
         if context and "$ARGUMENTS" in content:
-            content = content.replace("$ARGUMENTS", context)
+            content = content.replace("$ARGUMENTS", context, 1)
         return content
 
 

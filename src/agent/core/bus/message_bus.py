@@ -13,7 +13,7 @@ from agent.types import Event, EventType
 class MessageBus:
     """异步消息总线 - 支持事件订阅、发布和外部监听"""
 
-    def __init__(self, max_concurrent: int = 50):
+    def __init__(self, max_concurrent: int = 50, queue_timeout: float | None = None):
         self._subscribers: dict[EventType, list[Callable[["Event"], Awaitable[None]]]] = (
             defaultdict(list)
         )
@@ -22,6 +22,9 @@ class MessageBus:
         self._process_task: asyncio.Task[None] | None = None
         self._max_concurrent: int = max_concurrent
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrent)
+        self._queue_timeout: float = (
+            queue_timeout if queue_timeout is not None else MessageBusConfig().queue_timeout
+        )
         logger.info("MessageBus initialized with max_concurrent={}", max_concurrent)
 
     def subscribe(
@@ -34,8 +37,15 @@ class MessageBus:
         self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
     ) -> None:
         if event_type in self._subscribers:
-            self._subscribers[event_type].remove(handler)
-            logger.debug("Unsubscribed from {}: {}", event_type.value, handler.__name__)
+            try:
+                self._subscribers[event_type].remove(handler)
+                logger.debug("Unsubscribed from {}: {}", event_type.value, handler.__name__)
+            except ValueError:
+                logger.warning(
+                    "Handler {} not found in subscribers for {}",
+                    handler.__name__,
+                    event_type.value,
+                )
 
     async def publish(self, event: Event) -> None:
         await self._queue.put(event)
@@ -43,7 +53,7 @@ class MessageBus:
 
     async def _process_events(self) -> None:
         logger.info("Event processing loop started")
-        queue_timeout = MessageBusConfig().queue_timeout
+        queue_timeout = self._queue_timeout
         pending: set[asyncio.Task[None]] = set()
         while self._running or not self._queue.empty():
             try:
@@ -54,7 +64,11 @@ class MessageBus:
                         break
                     continue
                 _ = await self._semaphore.acquire()
-                task = asyncio.create_task(self._handle_event(event))
+                try:
+                    task = asyncio.create_task(self._handle_event(event))
+                except BaseException:
+                    self._semaphore.release()
+                    raise
 
                 def _on_done(_task: asyncio.Task[None]) -> None:
                     pending.discard(_task)
@@ -78,7 +92,10 @@ class MessageBus:
                 for i, result in enumerate(results):
                     if isinstance(result, Exception):
                         logger.error(
-                            f"Handler {handlers[i].__name__} failed for event {event.type.value}: {result}"
+                            "Handler {} failed for event {}: {}",
+                            handlers[i].__name__,
+                            event.type.value,
+                            result,
                         )
         finally:
             self._semaphore.release()
