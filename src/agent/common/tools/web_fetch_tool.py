@@ -16,6 +16,7 @@ from .results import ToolError, WebFetchSuccess
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),  # CGNAT
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
     ipaddress.ip_network("169.254.0.0/16"),
@@ -33,8 +34,6 @@ def _check_private_ip(host: str) -> bool:
         return False
     for _family, _type, _proto, _canonname, sockaddr in addr_infos:
         ip = ipaddress.ip_address(sockaddr[0])
-        if ip.is_loopback or ip.is_private or ip.is_reserved or ip.is_link_local:
-            return True
         for network in _BLOCKED_NETWORKS:
             if ip in network:
                 return True
