@@ -1,9 +1,12 @@
 """Agent基类"""
 
+import inspect
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from loguru import logger
+
+from .common.prompts.loader import PromptLoader
 
 from .config import ToolRuntimeConfig
 from .core.mcp.manager import MCPManager
@@ -50,6 +53,8 @@ class BaseAgent(ABC):
             restrict_to_workspace=tool_runtime.workspace.restrict,
             security=tool_runtime.security,
         )
+
+        self._prompt_loader: PromptLoader = PromptLoader()
 
         # Skills registered by this agent
         self._registered_skills: dict[str, Skill] = {}
@@ -100,13 +105,24 @@ class BaseAgent(ABC):
         """Agent 初始化钩子（注册工具和 skills）"""
         pass
 
-    def get_system_prompt(self, _context: SessionContext) -> str | None:
-        """
-        返回当前 agent 的专属 system prompt（可选覆盖）
-
-        默认返回 None，表示当前 agent 不注入 system prompt。
+    @property
+    def prompt_sections(self) -> list[str] | None:
+        """要从 agents.md 提取的 H2 段落名列表（大小写不敏感）。
+        None 表示使用整个文件内容。子类可覆盖。
         """
         return None
+
+    def get_system_prompt(self, _context: SessionContext) -> str | None:
+        """返回当前 agent 的系统提示词。
+
+        默认行为：在 Agent 类文件同目录下寻找 agents.md，通过 PromptLoader 读取。
+        文件不存在时返回 None。
+
+        子类可完整覆盖此方法实现自定义逻辑，也可通过 self._prompt_loader.load()
+        复用加载能力。
+        """
+        path = Path(inspect.getfile(type(self))).parent / "agents.md"
+        return self._prompt_loader.load(path, self.prompt_sections)
 
     @property
     def mcp_config_path(self) -> Path | None:

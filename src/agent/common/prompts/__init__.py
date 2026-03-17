@@ -1,3 +1,5 @@
-"""Prompt package placeholder after legacy prompt modules were removed."""
+"""Prompt utilities for agent system prompt loading."""
 
-__all__: list[str] = []
+from .loader import PromptLoader
+
+__all__ = ["PromptLoader"]
