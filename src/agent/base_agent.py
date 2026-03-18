@@ -1,6 +1,5 @@
 """Agent基类"""
 
-import inspect
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -105,24 +104,20 @@ class BaseAgent(ABC):
         """Agent 初始化钩子（注册工具和 skills）"""
         pass
 
-    @property
-    def prompt_sections(self) -> list[str] | None:
-        """要从 agents.md 提取的 H2 段落名列表（大小写不敏感）。
-        None 表示使用整个文件内容。子类可覆盖。
-        """
-        return None
+    def load_prompt_file(self, path: Path) -> str | None:
+        """加载单个提示词文件（内部自动处理 mtime 缓存）。"""
+        return self._prompt_loader.load(path)
 
     def get_system_prompt(self, _context: SessionContext) -> str | None:
         """返回当前 agent 的系统提示词。
 
-        默认行为：在 Agent 类文件同目录下寻找 agents.md，通过 PromptLoader 读取。
+        默认行为：在 workspace 根目录下寻找并加载 AGENTS.md。
         文件不存在时返回 None。
 
-        子类可完整覆盖此方法实现自定义逻辑，也可通过 self._prompt_loader.load()
-        复用加载能力。
+        子类可完整覆盖此方法实现自定义逻辑，也可通过
+        self.load_prompt_file() 复用加载能力，无需自行管理文件变更检测。
         """
-        path = Path(inspect.getfile(type(self))).parent / "agents.md"
-        return self._prompt_loader.load(path, self.prompt_sections)
+        return self.load_prompt_file(self.tool_runtime.workspace.root / "AGENTS.md")
 
     @property
     def mcp_config_path(self) -> Path | None:

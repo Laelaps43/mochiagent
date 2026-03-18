@@ -10,6 +10,7 @@ import pytest
 from agent.base_agent import BaseAgent
 from agent.core.mcp import MCPManager
 from agent.common.tools import SkillTool
+from agent.config import ToolRuntimeConfig, WorkspaceConfig
 from agent.context import AgentContext
 from agent.core.bus import MessageBus
 from agent.core.session import SessionManager
@@ -53,8 +54,13 @@ class _FakeTool(Tool):
 
 @final
 class _ConcreteAgent(BaseAgent):
-    def __init__(self, skill_dir: Path | None = None) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        skill_dir: Path | None = None,
+        *,
+        tools: ToolRuntimeConfig | None = None,
+    ) -> None:
+        super().__init__(tools=tools)
         self._skill_dir: Path | None = skill_dir
 
     @property
@@ -155,14 +161,42 @@ def test_context_property_requires_binding_and_bind_context_works() -> None:
     assert agent.context is context
 
 
-def test_default_optional_methods_and_properties_return_none_or_empty() -> None:
-    agent = _ConcreteAgent()
+def test_default_optional_methods_and_properties_return_none_or_empty(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    agent = _ConcreteAgent(
+        tools=ToolRuntimeConfig(workspace=WorkspaceConfig(root=workspace, restrict=True))
+    )
     session_context = SessionContext(session_id="session-1", model_profile_id="test:m1")
 
     assert agent.get_system_prompt(session_context) is None
     assert agent.mcp_config_path is None
     assert agent.default_model_profile is None
     assert agent.get_mcp_status() == {}
+
+
+def test_get_system_prompt_loads_workspace_agents_md(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _ = (workspace / "AGENTS.md").write_text("workspace prompt\n", encoding="utf-8")
+    agent = _ConcreteAgent(
+        tools=ToolRuntimeConfig(workspace=WorkspaceConfig(root=workspace, restrict=True))
+    )
+    session_context = SessionContext(session_id="session-1", model_profile_id="test:m1")
+
+    assert agent.get_system_prompt(session_context) == "workspace prompt"
+
+
+def test_load_prompt_file_reads_single_path(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    prompt = workspace / "custom.md"
+    _ = prompt.write_text("custom prompt\n", encoding="utf-8")
+    agent = _ConcreteAgent(
+        tools=ToolRuntimeConfig(workspace=WorkspaceConfig(root=workspace, restrict=True))
+    )
+
+    assert agent.load_prompt_file(prompt) == "custom prompt"
 
 
 def test_register_tool_adds_tool_to_registry() -> None:
