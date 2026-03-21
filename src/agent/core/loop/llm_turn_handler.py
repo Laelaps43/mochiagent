@@ -72,6 +72,9 @@ class LLMTurnHandler:
         llm = self.adapter_registry.get(llm_config)
         compaction_events: list[CompactionPayload] = []
 
+        # Prune old tool outputs before compaction check
+        _ = agent.context.strategy_manager.run_prune(context)
+
         pre_compaction = await self._run_context_compaction(
             context=context,
             budget=context.context_budget.model_copy(deep=True),

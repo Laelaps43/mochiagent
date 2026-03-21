@@ -180,6 +180,13 @@ class AgentFramework:
         """
         try:
             await agent.setup()
+
+            # Auto-register read_artifact tool for all agents
+            from agent.common.tools.read_artifact_tool import ReadArtifactTool
+
+            if self.session_manager and not agent.tool_registry.has("read_artifact"):
+                agent.register_tool(ReadArtifactTool(self.session_manager.storage))
+
             logger.info("Agent '{}' setup completed", agent.name)
         except Exception as e:
             logger.error("Failed to setup agent '{}': {}", agent.name, e)

@@ -165,7 +165,7 @@ class StorageProvider(ABC):
         self,
         artifact_ref: str,
         offset: int = 0,
-        limit: int = 50000,
+        limit: int = 100000,
     ) -> ArtifactReadResult:
         """
         读取 artifact 内容（支持分段读取）。

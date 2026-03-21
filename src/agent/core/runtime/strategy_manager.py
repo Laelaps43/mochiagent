@@ -24,6 +24,7 @@ from .result_postprocessor import (
     ToolResultPostProcessor,
     ToolResultPostProcessorStrategy,
 )
+from .tool_output_pruner import ToolOutputPruner
 from agent.core.tools.types import ToolResult
 from agent.types import Event, LLMConfig
 
@@ -54,6 +55,7 @@ class AgentStrategyManager:
         self._postprocess: StrategySlot[ToolResultPostProcessorStrategy] = StrategySlot(
             ToolResultPostProcessor()
         )
+        self._pruner: ToolOutputPruner = ToolOutputPruner()
         self._compaction_options: dict[str, CompactorRunOptions] = {}
 
     def set(
@@ -129,3 +131,7 @@ class AgentStrategyManager:
                 exc,
             )
             return tool_result
+
+    def run_prune(self, context: SessionContext) -> int:
+        """Prune old tool outputs to free context space."""
+        return self._pruner.prune(context.messages)

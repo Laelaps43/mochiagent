@@ -22,9 +22,8 @@ from agent.core.tools.types import ToolResult
 class ToolResultPostProcessConfig(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    summary_max_chars: int = 4000
-    preview_head_chars: int = 1500
-    preview_tail_chars: int = 1000
+    summary_max_chars: int = 25000
+    preview_head_chars: int = 20000
 
 
 class ToolResultPostProcessorStrategy(ABC):
@@ -91,15 +90,16 @@ class ToolResultPostProcessor(ToolResultPostProcessorStrategy):
             artifact_ref = None
             artifact_path = None
         head = raw_text[: self.config.preview_head_chars]
-        tail = raw_text[-self.config.preview_tail_chars :]
+        artifact_notice = (
+            f"Complete output saved as artifact: {artifact_ref}\n"
+            + "⚠️ You MUST use read_artifact with this artifact_ref to access the full data before responding.\n\n"
+            if artifact_ref
+            else ""
+        )
         summary = (
-            f"Tool `{result.tool_name}` produced large output ({raw_size} chars), truncated for context.\n"
-            + (
-                f"Artifact: {artifact_ref}\nPath: {artifact_path}\nUse `read_file` with `path`, `offset`, `limit` for chunked reading.\n\n"
-                if artifact_ref and artifact_path
-                else "Storage has no artifact support, only preview is available.\n\n"
-            )
-            + f"[Preview head]\n{head}\n\n[Preview tail]\n{tail}"
+            f"Tool `{result.tool_name}` output truncated ({raw_size} → {len(head)} chars).\n"
+            + artifact_notice
+            + f"[Preview]\n{head}"
         )
         if len(summary) > self.config.summary_max_chars:
             summary = summary[: self.config.summary_max_chars]
