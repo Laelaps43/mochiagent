@@ -44,14 +44,12 @@ class _FrameworkAgent(BaseAgent):
         self.setup_calls: int = 0
         self.cleanup_calls: int = 0
 
-    @property
-    @override
-    def name(self) -> str:
+    @override  # type: ignore[override]
+    def name(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         return self._agent_name
 
-    @property
-    @override
-    def description(self) -> str:
+    @override  # type: ignore[override]
+    def description(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         return f"description for {self._agent_name}"
 
     @property

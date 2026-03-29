@@ -63,14 +63,14 @@ class _ConcreteAgent(BaseAgent):
         super().__init__(tools=tools)
         self._skill_dir: Path | None = skill_dir
 
-    @property
+    @staticmethod
     @override
-    def name(self) -> str:
+    def name() -> str:
         return "concrete"
 
-    @property
+    @staticmethod
     @override
-    def description(self) -> str:
+    def description() -> str:
         return "Concrete test agent"
 
     @property
@@ -123,24 +123,16 @@ async def _build_registered_agent() -> tuple[AgentFramework, _ConcreteAgent]:
 async def test_base_agent_abstract_members_are_callable() -> None:
     agent = _ConcreteAgent()
 
-    name_prop = cast(property, BaseAgent.__dict__["name"])
-    description_prop = cast(property, BaseAgent.__dict__["description"])
     allowed_profiles_prop = cast(property, BaseAgent.__dict__["allowed_model_profiles"])
-    name_getter = cast(Callable[[_ConcreteAgent], str | None], name_prop.fget)
-    description_getter = cast(Callable[[_ConcreteAgent], str | None], description_prop.fget)
     allowed_profiles_getter = cast(
         Callable[[_ConcreteAgent], set[str] | None], allowed_profiles_prop.fget
     )
 
-    assert isinstance(name_prop, property)
-    assert isinstance(description_prop, property)
     assert isinstance(allowed_profiles_prop, property)
-    assert name_prop.fget is not None
-    assert description_prop.fget is not None
     assert allowed_profiles_prop.fget is not None
 
-    assert name_getter(agent) is None
-    assert description_getter(agent) is None
+    assert BaseAgent.name() is None
+    assert BaseAgent.description() is None
     assert allowed_profiles_getter(agent) is None
     assert await BaseAgent.setup(agent) is None
 
@@ -285,7 +277,7 @@ async def test_push_message_with_string_builds_user_input_and_saves_message() ->
     _ = await framework.session_manager.get_or_create_session(
         session_id="session-1",
         model_profile_id="test:m1",
-        agent_name=agent.name,
+        agent_name=agent.name(),
     )
 
     await agent.push_message("session-1", "hello world")
@@ -322,11 +314,11 @@ async def test_take_session_returns_session_and_switches_agent() -> None:
     session = await agent.take_session("session-3", model_profile_id="test:m1")
 
     assert session.session_id == "session-3"
-    assert session.agent_name == agent.name
+    assert session.agent_name == agent.name()
     assert session.model_profile_id == "test:m1"
 
     context = await framework.session_manager.get_session("session-3")
-    assert context.agent_name == agent.name
+    assert context.agent_name == agent.name()
 
 
 async def test_handle_event_is_default_noop() -> None:

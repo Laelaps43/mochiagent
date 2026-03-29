@@ -39,7 +39,9 @@ class AdapterRegistry:
     @staticmethod
     def _cache_key(config: LLMConfig) -> str:
         if config.api_key:
-            api_key_hash = hashlib.sha256(config.api_key.get_secret_value().encode()).hexdigest()[:32]
+            api_key_hash = hashlib.sha256(config.api_key.get_secret_value().encode()).hexdigest()[
+                :32
+            ]
         else:
             api_key_hash = ""
         return f"{config.adapter}:{config.model}:{config.base_url}:{api_key_hash}"

@@ -11,14 +11,14 @@ from agent.framework import AgentFramework, reset_framework
 
 
 class _MinimalAgent(BaseAgent):
-    @property
+    @staticmethod
     @override
-    def name(self) -> str:
+    def name() -> str:
         return "minimal"
 
-    @property
+    @staticmethod
     @override
-    def description(self) -> str:
+    def description() -> str:
         return "test agent"
 
     @property
@@ -37,14 +37,14 @@ class _MinimalAgent(BaseAgent):
 
 
 class _AnotherAgent(BaseAgent):
-    @property
+    @staticmethod
     @override
-    def name(self) -> str:
+    def name() -> str:
         return "another"
 
-    @property
+    @staticmethod
     @override
-    def description(self) -> str:
+    def description() -> str:
         return "second test agent"
 
     @property
@@ -77,14 +77,14 @@ async def initialized_framework() -> AgentFramework:
 
 def test_base_agent_without_allowed_model_profiles_is_abstract():
     class _Incomplete(BaseAgent):  # pyright: ignore[reportImplicitAbstractClass]
-        @property
+        @staticmethod
         @override
-        def name(self) -> str:
+        def name() -> str:
             return "incomplete"
 
-        @property
+        @staticmethod
         @override
-        def description(self) -> str:
+        def description() -> str:
             return "incomplete"
 
         @property
@@ -116,7 +116,7 @@ async def test_register_agent_success(initialized_framework: AgentFramework):
     await initialized_framework.register_agent(_MinimalAgent())
     agent = initialized_framework.get_agent("minimal")
     assert agent is not None
-    assert agent.name == "minimal"
+    assert agent.name() == "minimal"
 
 
 async def test_register_multiple_agents(initialized_framework: AgentFramework):

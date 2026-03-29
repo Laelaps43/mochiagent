@@ -44,14 +44,14 @@ class EchoTool(Tool):
 
 
 class DemoAgent(BaseAgent):
-    @property
+    @staticmethod
     @override
-    def name(self) -> str:
+    def name() -> str:
         return "demo_agent"
 
-    @property
+    @staticmethod
     @override
-    def description(self) -> str:
+    def description() -> str:
         return "Minimal demo agent."
 
     @property

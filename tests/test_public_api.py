@@ -21,14 +21,14 @@ def _llm_config() -> LLMConfig:
 
 @final
 class _SimpleAgent(BaseAgent):
-    @property
+    @staticmethod
     @override
-    def name(self) -> str:
+    def name() -> str:
         return "simple"
 
-    @property
+    @staticmethod
     @override
-    def description(self) -> str:
+    def description() -> str:
         return "simple agent"
 
     @property
@@ -65,7 +65,7 @@ async def test_setup_and_shutdown_with_default_storage() -> None:
     )
     agent = await api.get_agent("simple")
     assert agent is not None
-    assert agent.name == "simple"
+    assert agent.name() == "simple"
     names = await api.list_agents()
     assert "simple" in names
     await api.shutdown()
@@ -101,14 +101,14 @@ def test_agent_decorator_registers_class() -> None:
     @api.agent
     @final
     class _DecoratedAgent(BaseAgent):
-        @property
+        @staticmethod
         @override
-        def name(self) -> str:
+        def name() -> str:
             return "decorated"
 
-        @property
+        @staticmethod
         @override
-        def description(self) -> str:
+        def description() -> str:
             return "decorated agent"
 
         @property
