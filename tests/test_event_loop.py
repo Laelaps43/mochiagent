@@ -118,7 +118,7 @@ class _StaticTurnHandler:
         self._error: Exception | None = error
         self.calls: int = 0
 
-    async def run(self, _session_id: str) -> LLMTurnResult:
+    async def run(self, _session_id: str, _agent: object | None = None) -> LLMTurnResult:
         self.calls += 1
         if self._error is not None:
             raise self._error
@@ -133,7 +133,12 @@ class _FakeToolExecutor:
         self._results: list[ToolResult] = results
         self.calls: int = 0
 
-    async def execute_batch(self, _tool_calls: list[ToolCallPayload]) -> list[ToolResult]:
+    async def execute_batch(
+        self,
+        _tool_calls: list[ToolCallPayload],
+        *,
+        context: dict[str, object] | None = None,  # pyright: ignore[reportUnusedParameter]
+    ) -> list[ToolResult]:
         self.calls += 1
         return self._results
 
@@ -155,15 +160,20 @@ class _FakeStrategyManager:
 
 @final
 class _FakeAgentContext:
-    def __init__(self):
+    def __init__(self, session_manager: object | None = None):
         self.strategy_manager: _FakeStrategyManager = _FakeStrategyManager()
+        self.session_manager: object | None = session_manager
 
 
 @final
 class _FakeAgent:
-    def __init__(self, results: list[ToolResult]):
+    def __init__(self, results: list[ToolResult], session_manager: object | None = None):
         self.tool_executor: _FakeToolExecutor = _FakeToolExecutor(results)
-        self.context: _FakeAgentContext = _FakeAgentContext()
+        self.context: _FakeAgentContext = _FakeAgentContext(session_manager=session_manager)
+
+    @staticmethod
+    def name() -> str:
+        return "test_agent"
 
 
 def _make_framework(get_agent_result: object | None) -> FrameworkProtocol:
@@ -225,21 +235,27 @@ async def _call_handle_user_message(loop: AgentEventLoop, event: Event) -> None:
     await method(event)
 
 
-async def _call_conversation_loop(loop: AgentEventLoop, session_id: str) -> None:
-    method = cast(Callable[[str], Awaitable[None]], getattr(loop, "_conversation_loop"))
-    await method(session_id)
+async def _call_conversation_loop(
+    loop: AgentEventLoop, session_id: str, agent: object | None = None
+) -> None:
+    from agent.base_agent import BaseAgent
+
+    resolved: BaseAgent = cast(BaseAgent, agent if agent else _FakeAgent([]))
+    _ = await loop.conversation_runner.conversation_loop(session_id, resolved)
 
 
 async def _call_execute_tools(
     loop: AgentEventLoop,
     session_id: str,
     tool_calls: list[ToolCallPayload],
+    agent: object | None = None,
 ) -> list[ToolResult]:
-    method = cast(
-        Callable[[str, list[ToolCallPayload]], Awaitable[list[ToolResult]]],
-        getattr(loop, "_execute_tools"),
+    from agent.base_agent import BaseAgent
+
+    resolved: BaseAgent = cast(
+        BaseAgent, agent if agent else cast(BaseAgent, cast(object, _FakeAgent([])))
     )
-    return await method(session_id, tool_calls)
+    return await loop.conversation_runner.execute_tools(session_id, resolved, tool_calls)
 
 
 def test_init_subscribes_handlers_and_normalizes_max_iterations() -> None:
@@ -348,15 +364,17 @@ async def test_handle_user_message_happy_path_calls_conversation_loop() -> None:
     context = _make_context()
     _ = context.build_user_message([UserTextInput(text="hello")])
     session_manager = _StubSessionManager({"sess_1": context})
-    loop = _make_loop(session_manager)
+    agent = _FakeAgent([], session_manager=session_manager)
+    framework = _make_framework(agent)
+    loop = _make_loop(session_manager, framework=framework)
 
     calls = {"count": 0}
 
-    async def fake_conversation_loop(session_id: str) -> None:
+    async def fake_conversation_loop(session_id: str, _agent: object) -> None:
         calls["count"] += 1
         assert session_id == "sess_1"
 
-    setattr(loop, "_conversation_loop", fake_conversation_loop)
+    setattr(loop.conversation_runner, "conversation_loop", fake_conversation_loop)
 
     await _call_handle_user_message(
         loop, Event(type=EventType.MESSAGE_RECEIVED, session_id="sess_1", data={})
@@ -385,12 +403,14 @@ async def test_handle_user_message_general_exception_uses_resolved_payload() -> 
     context = _make_context()
     _ = context.build_user_message([UserTextInput(text="hello")])
     session_manager = _StubSessionManager({"sess_1": context})
-    loop = _make_loop(session_manager)
+    agent = _FakeAgent([], session_manager=session_manager)
+    framework = _make_framework(agent)
+    loop = _make_loop(session_manager, framework=framework)
 
-    async def failing_loop(_session_id: str) -> None:
+    async def failing_loop(_session_id: str, _agent: object) -> None:
         raise RuntimeError("unexpected")
 
-    setattr(loop, "_conversation_loop", failing_loop)
+    setattr(loop.conversation_runner, "conversation_loop", failing_loop)
 
     with patch(
         "agent.core.loop.event_loop.LLMTurnHandler.resolve_error_payload",
@@ -413,10 +433,11 @@ async def test_conversation_loop_single_turn_emits_done_and_sets_idle() -> None:
     context = _make_context()
     _ = context.build_user_message([UserTextInput(text="prompt")])
     session_manager = _StubSessionManager({"sess_1": context})
+    agent = _FakeAgent([], session_manager=session_manager)
     loop = _make_loop(session_manager)
     setattr(
-        loop,
-        "_llm_turn_handler",
+        loop.conversation_runner,
+        "turn_handler",
         _StaticTurnHandler(
             [
                 _make_turn_result(
@@ -428,7 +449,7 @@ async def test_conversation_loop_single_turn_emits_done_and_sets_idle() -> None:
         ),
     )
 
-    await _call_conversation_loop(loop, "sess_1")
+    await _call_conversation_loop(loop, "sess_1", agent)
 
     assert context.state == SessionState.IDLE
     assert session_manager.finished_messages
@@ -441,11 +462,12 @@ async def test_conversation_loop_tool_calls_then_continue_and_done() -> None:
     context = _make_context()
     _ = context.build_user_message([UserTextInput(text="prompt")])
     session_manager = _StubSessionManager({"sess_1": context})
+    agent = _FakeAgent([], session_manager=session_manager)
     loop = _make_loop(session_manager)
     tool_call = _make_tool_call(call_id="call_1")
     setattr(
-        loop,
-        "_llm_turn_handler",
+        loop.conversation_runner,
+        "turn_handler",
         _StaticTurnHandler(
             [
                 _make_turn_result(
@@ -462,6 +484,7 @@ async def test_conversation_loop_tool_calls_then_continue_and_done() -> None:
 
     async def fake_execute_tools(
         session_id: str,
+        _agent: object,
         tool_calls: list[ToolCallPayload],
     ) -> list[ToolResult]:
         execute_calls["count"] += 1
@@ -469,9 +492,9 @@ async def test_conversation_loop_tool_calls_then_continue_and_done() -> None:
         assert len(tool_calls) == 1
         return []
 
-    setattr(loop, "_execute_tools", fake_execute_tools)
+    setattr(loop.conversation_runner, "execute_tools", fake_execute_tools)
 
-    await _call_conversation_loop(loop, "sess_1")
+    await _call_conversation_loop(loop, "sess_1", agent)
 
     assert execute_calls["count"] == 1
     assert context.state == SessionState.IDLE
@@ -487,11 +510,12 @@ async def test_conversation_loop_max_iterations_exceeded_emits_error_and_done() 
         model_id="gpt-4o-mini",
     )
     session_manager = _StubSessionManager({"sess_1": context})
+    agent = _FakeAgent([], session_manager=session_manager)
     loop = _make_loop(session_manager, max_iterations=1)
     tool_call = _make_tool_call(call_id="call_1")
     setattr(
-        loop,
-        "_llm_turn_handler",
+        loop.conversation_runner,
+        "turn_handler",
         _StaticTurnHandler(
             [
                 _make_turn_result(
@@ -505,13 +529,14 @@ async def test_conversation_loop_max_iterations_exceeded_emits_error_and_done() 
 
     async def fake_execute_tools(
         _session_id: str,
+        _agent: object,
         _tool_calls: list[ToolCallPayload],
     ) -> list[ToolResult]:
         return []
 
-    setattr(loop, "_execute_tools", fake_execute_tools)
+    setattr(loop.conversation_runner, "execute_tools", fake_execute_tools)
 
-    await _call_conversation_loop(loop, "sess_1")
+    await _call_conversation_loop(loop, "sess_1", agent)
 
     assert context.state == SessionState.IDLE
     assert session_manager.finished_messages
@@ -532,11 +557,16 @@ async def test_conversation_loop_exception_sets_error_finishes_and_reraises() ->
         model_id="gpt-4o-mini",
     )
     session_manager = _StubSessionManager({"sess_1": context})
+    agent = _FakeAgent([], session_manager=session_manager)
     loop = _make_loop(session_manager)
-    setattr(loop, "_llm_turn_handler", _StaticTurnHandler(error=RuntimeError("loop crash")))
+    setattr(
+        loop.conversation_runner,
+        "turn_handler",
+        _StaticTurnHandler(error=RuntimeError("loop crash")),
+    )
 
     with pytest.raises(RuntimeError, match="loop crash"):
-        await _call_conversation_loop(loop, "sess_1")
+        await _call_conversation_loop(loop, "sess_1", agent)
 
     assert context.state == SessionState.ERROR
     assert session_manager.finished_messages
@@ -560,11 +590,16 @@ async def test_conversation_loop_exception_cleanup_get_session_failure_not_raise
             context,
         ]
     )
+    agent = _FakeAgent([], session_manager=session_manager)
     loop = _make_loop(session_manager)
-    setattr(loop, "_llm_turn_handler", _StaticTurnHandler(error=RuntimeError("loop failure")))
+    setattr(
+        loop.conversation_runner,
+        "turn_handler",
+        _StaticTurnHandler(error=RuntimeError("loop failure")),
+    )
 
     with pytest.raises(RuntimeError, match="loop failure"):
-        await _call_conversation_loop(loop, "sess_1")
+        await _call_conversation_loop(loop, "sess_1", agent)
 
     assert context.state == SessionState.ERROR
 
@@ -572,13 +607,15 @@ async def test_conversation_loop_exception_cleanup_get_session_failure_not_raise
 async def test_execute_tools_no_current_message_returns_empty() -> None:
     context = _make_context()
     session_manager = _StubSessionManager({"sess_1": context})
+    agent = _FakeAgent([], session_manager=session_manager)
     loop = _make_loop(session_manager)
 
-    results = await _call_execute_tools(loop, "sess_1", [_make_tool_call()])
+    results = await _call_execute_tools(loop, "sess_1", [_make_tool_call()], agent)
     assert results == []
 
 
 async def test_execute_tools_agent_not_found_raises_runtime_error() -> None:
+    """Agent is now passed directly; passing agent with None session_manager triggers AttributeError."""
     context = _make_context()
     user_message = context.build_user_message([UserTextInput(text="prompt")])
     _ = context.build_assistant_message(
@@ -587,11 +624,12 @@ async def test_execute_tools_agent_not_found_raises_runtime_error() -> None:
         model_id="gpt-4o-mini",
     )
     session_manager = _StubSessionManager({"sess_1": context})
+    agent_no_sm = _FakeAgent([], session_manager=None)
     framework = _make_framework(None)
     loop = _make_loop(session_manager, framework=framework)
 
-    with pytest.raises(RuntimeError, match="not found"):
-        _ = await _call_execute_tools(loop, "sess_1", [_make_tool_call()])
+    with pytest.raises(AttributeError):
+        _ = await _call_execute_tools(loop, "sess_1", [_make_tool_call()], agent_no_sm)
 
 
 async def test_execute_tools_happy_path_emits_running_and_completed() -> None:
@@ -610,12 +648,12 @@ async def test_execute_tools_happy_path_emits_running_and_completed() -> None:
         success=True,
         summary="done",
     )
-    agent = _FakeAgent([tool_result])
-    framework = _make_framework(agent)
     session_manager = _StubSessionManager({"sess_1": context})
+    agent = _FakeAgent([tool_result], session_manager=session_manager)
+    framework = _make_framework(agent)
     loop = _make_loop(session_manager, framework=framework)
 
-    results = await _call_execute_tools(loop, "sess_1", [call])
+    results = await _call_execute_tools(loop, "sess_1", [call], agent)
 
     assert len(results) == 1
     assert results[0].success is True
@@ -649,12 +687,12 @@ async def test_execute_tools_failure_result_updates_to_error() -> None:
         success=False,
         error="denied",
     )
-    agent = _FakeAgent([tool_result])
-    framework = _make_framework(agent)
     session_manager = _StubSessionManager({"sess_1": context})
+    agent = _FakeAgent([tool_result], session_manager=session_manager)
+    framework = _make_framework(agent)
     loop = _make_loop(session_manager, framework=framework)
 
-    _ = await _call_execute_tools(loop, "sess_1", [call])
+    _ = await _call_execute_tools(loop, "sess_1", [call], agent)
 
     part_events = [
         event for event in session_manager.emitted_events if event.type == EventType.PART_CREATED
@@ -678,12 +716,12 @@ async def test_execute_tools_skips_result_when_call_id_not_in_map() -> None:
         result="ignored",
         success=True,
     )
-    agent = _FakeAgent([unknown_result])
-    framework = _make_framework(agent)
     session_manager = _StubSessionManager({"sess_1": context})
+    agent = _FakeAgent([unknown_result], session_manager=session_manager)
+    framework = _make_framework(agent)
     loop = _make_loop(session_manager, framework=framework)
 
-    results = await _call_execute_tools(loop, "sess_1", [call])
+    results = await _call_execute_tools(loop, "sess_1", [call], agent)
 
     assert len(results) == 1
     part_events = [

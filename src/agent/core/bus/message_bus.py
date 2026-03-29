@@ -32,16 +32,14 @@ class MessageBus:
     def subscribe(
         self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
     ) -> None:
-        """订阅指定事件类型。
-        """
+        """订阅指定事件类型。"""
         self._subscribers[event_type].append(handler)
         logger.debug("Subscribed to {}: {}", event_type.value, handler.__name__)
 
     def unsubscribe(
         self, event_type: EventType, handler: Callable[["Event"], Awaitable[None]]
     ) -> None:
-        """取消订阅指定事件类型。
-        """
+        """取消订阅指定事件类型。"""
         if event_type in self._subscribers:
             try:
                 self._subscribers[event_type].remove(handler)

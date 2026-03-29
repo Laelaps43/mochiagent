@@ -1,5 +1,7 @@
 """Agent基类"""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -60,6 +62,9 @@ class BaseAgent(ABC):
         self._skill_tool: SkillTool | None = None  # 缓存统一的 skill tool
         self._mcp_manager: MCPManager | None = None
 
+        # SubAgent 类注册（只存类，调用时才实例化。实际存 type[SubAgentBase]）
+        self.subagent_classes: dict[str, type] = {}
+
         logger.debug("{} initialized", self.__class__.__name__)
 
     def bind_context(self, ctx: AgentContext) -> None:
@@ -70,7 +75,7 @@ class BaseAgent(ABC):
             ctx: Agent 运行上下文，封装了 session_manager 和 message_bus
         """
         self._ctx = ctx
-        logger.debug("Agent {} bound to context", self.name)
+        logger.debug("Agent {} bound to context", self.name())
 
     def unbind_context(self) -> None:
         self._ctx = None
@@ -84,18 +89,18 @@ class BaseAgent(ABC):
             RuntimeError: If context not bound yet
         """
         if self._ctx is None:
-            raise RuntimeError(f"Agent '{self.name}' context not bound yet")
+            raise RuntimeError(f"Agent '{self.name()}' context not bound yet")
         return self._ctx
 
-    @property
+    @staticmethod
     @abstractmethod
-    def name(self) -> str:
+    def name() -> str:
         """Agent名称"""
         pass
 
-    @property
+    @staticmethod
     @abstractmethod
-    def description(self) -> str:
+    def description() -> str:
         """Agent描述"""
         pass
 
@@ -136,7 +141,7 @@ class BaseAgent(ABC):
             tool: Tool instance to register
         """
         self.tool_registry.register(tool)
-        logger.info("Agent {} registered tool: {}", self.name, tool.name)
+        logger.info("Agent {} registered tool: {}", self.name(), tool.name)
 
     async def register_mcp_tools(self, path: Path | None = None) -> None:
         """从 mcp.json 读取 mcpServers 并注册 MCP 工具。
@@ -172,24 +177,24 @@ class BaseAgent(ABC):
             await manager.close()
             logger.error(
                 "Failed to register MCP tools for agent '{}' from {}: {}",
-                self.name,
+                self.name(),
                 config_path,
                 exc,
             )
-            raise RuntimeError(f"MCP registration failed for agent '{self.name}': {exc}") from exc
+            raise RuntimeError(f"MCP registration failed for agent '{self.name()}': {exc}") from exc
 
         if registered > 0:
             self._mcp_manager = manager
             logger.info(
                 "Agent '{}' registered {} MCP tools from {}",
-                self.name,
+                self.name(),
                 registered,
                 config_path,
             )
         else:
             logger.warning(
                 "Agent '{}' MCP configured but no tools registered: {}",
-                self.name,
+                self.name(),
                 manager.snapshot(),
             )
             await manager.close()
@@ -257,7 +262,7 @@ class BaseAgent(ABC):
             ...     self.register_skill("sql-query")
         """
         if self.skill_directory is None:
-            raise ValueError(f"Agent {self.name} has no skill_directory")
+            raise ValueError(f"Agent {self.name()} has no skill_directory")
 
         # 使用 agent 自己的 skill 目录
         loader = SkillLoader(self.skill_directory)
@@ -270,7 +275,7 @@ class BaseAgent(ABC):
         self._registered_skills[skill.name] = skill
         logger.info(
             "Agent '{}' registered skill '{}' from {}",
-            self.name,
+            self.name(),
             skill.name,
             self.skill_directory,
         )
@@ -296,10 +301,26 @@ class BaseAgent(ABC):
         skill_names = list(self._registered_skills.keys())
         logger.info(
             "Agent '{}' updated skill tool with {} skills: {}",
-            self.name,
+            self.name(),
             len(self._registered_skills),
             skill_names,
         )
+
+    def register_subagent(self, subagent_cls: type[BaseAgent]) -> None:
+        """注册 SubAgent 类到当前 agent。
+
+        只存类引用，不实例化。TaskTool 持有 dict 引用，动态读取。
+
+        Args:
+            subagent_cls: SubAgentBase 的子类（传类，不传实例）
+        """
+        name: str = subagent_cls.name()
+
+        if name in self.subagent_classes:
+            raise ValueError(f"SubAgent '{name}' already registered on agent '{self.name()}'")
+
+        self.subagent_classes[name] = subagent_cls
+        logger.info("Agent '{}' registered subagent class: {}", self.name(), name)
 
     async def push_message(
         self,
@@ -321,15 +342,15 @@ class BaseAgent(ABC):
 
         # 验证 session 归属
         session = await ctx.session_manager.get_session(session_id)
-        if session.agent_name != self.name:
+        if session.agent_name != self.name():
             logger.warning(
                 "Session {} belongs to agent '{}', not '{}'",
                 session_id,
                 session.agent_name,
-                self.name,
+                self.name(),
             )
             raise ValueError(
-                f"Session {session_id} belongs to agent '{session.agent_name}', not '{self.name}'"
+                f"Session {session_id} belongs to agent '{session.agent_name}', not '{self.name()}'"
             )
 
         # 转换消息格式：如果是字符串，自动构建为 UserInput
@@ -368,14 +389,14 @@ class BaseAgent(ABC):
             raise ValueError("model_profile_id is required when taking a session")
 
         session = await ctx.get_session(
-            self.name,
+            self.name(),
             session_id,
             model_profile_id=resolved_model_profile_id,
         )
 
         # 仅在 agent 实际变更时才切换，避免冗余存储写入和事件
-        if session.agent_name != self.name:
-            await ctx.switch_session_agent(session_id, self.name)
+        if session.agent_name != self.name():
+            await ctx.switch_session_agent(session_id, self.name())
 
         return session
 
@@ -390,6 +411,8 @@ class BaseAgent(ABC):
 
     async def cleanup(self) -> None:
         """清理资源（可选覆盖）"""
+        self.subagent_classes.clear()
+
         if self._mcp_manager:
             await self._mcp_manager.close()
             self._mcp_manager = None

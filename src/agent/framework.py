@@ -97,8 +97,8 @@ class AgentFramework:
             if not self._initialized:
                 raise RuntimeError("Framework not initialized. Call initialize() first.")
 
-            if agent.name in self._agents:
-                raise ValueError(f"Agent '{agent.name}' already registered")
+            if agent.name() in self._agents:
+                raise ValueError(f"Agent '{agent.name()}' already registered")
 
             normalized_allowed = self._normalize_allowed_profiles(agent.allowed_model_profiles)
 
@@ -115,20 +115,21 @@ class AgentFramework:
                 session_manager=self.session_manager,
                 message_bus=self.bus,
                 strategy_manager=self._strategy_manager,
-                agent_name=agent.name,
+                agent_name=agent.name(),
                 llm_profiles=agent_llm_profiles,
+                adapter_registry=self.adapter_registry,
             )
             agent.bind_context(ctx)
-            self._agents[agent.name] = agent
+            self._agents[agent.name()] = agent
 
             try:
                 await self._setup_agent(agent)
             except Exception:
-                _ = self._agents.pop(agent.name, None)
+                _ = self._agents.pop(agent.name(), None)
                 agent.unbind_context()
                 raise
 
-            logger.info("Registered agent: {}", agent.name)
+            logger.info("Registered agent: {}", agent.name())
 
     def get_agent(self, agent_name: str) -> BaseAgent | None:
         return self._agents.get(agent_name)
@@ -187,9 +188,25 @@ class AgentFramework:
             if self.session_manager and not agent.tool_registry.has("read_artifact"):
                 agent.register_tool(ReadArtifactTool(self.session_manager.storage))
 
-            logger.info("Agent '{}' setup completed", agent.name)
+            # Auto-register task tool if agent has subagent classes
+            if agent.subagent_classes and not agent.tool_registry.has("task"):
+                from agent.common.tools.task_tool import TaskTool
+
+                if self.session_manager is None:
+                    raise RuntimeError("Framework not initialized: session_manager is None.")
+                agent.register_tool(
+                    TaskTool(
+                        subagent_classes=agent.subagent_classes,
+                        adapter_registry=self.adapter_registry,
+                        session_manager=self.session_manager,
+                        message_bus=self.bus,
+                        llm_profiles=agent.context.llm_profiles,
+                    )
+                )
+
+            logger.info("Agent '{}' setup completed", agent.name())
         except Exception as e:
-            logger.error("Failed to setup agent '{}': {}", agent.name, e)
+            logger.error("Failed to setup agent '{}': {}", agent.name(), e)
             raise
 
     async def unregister_agent(self, agent_name: str) -> None:
@@ -227,7 +244,7 @@ class AgentFramework:
                 try:
                     await agent.cleanup()
                 except Exception as exc:
-                    logger.warning("Agent '{}' cleanup failed: {}", agent.name, exc)
+                    logger.warning("Agent '{}' cleanup failed: {}", agent.name(), exc)
 
             await self.bus.stop()
 

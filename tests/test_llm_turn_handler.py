@@ -2,22 +2,21 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import cast, final, override
+
+from agent.base_agent import BaseAgent
 from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretStr
 
 from agent.core.compression import CompactionPayload, CompactionStage
-from agent.core.llm import AdapterRegistry
 from agent.core.llm.base import LLMProvider
 from agent.core.llm.errors import LLMProviderError
-from agent.core.loop._framework_protocol import FrameworkProtocol
 from agent.core.loop.llm_turn_handler import LLMTurnHandler
 from agent.core.message import Message as InternalMessage
 from agent.core.message import TextPart, UserTextInput
 from agent.core.message.info import AssistantMessageInfo
 from agent.core.runtime.strategy_manager import AgentStrategyManager
-from agent.core.session import SessionManager
 from agent.core.session.context import SessionContext
 from agent.core.session.types import ContextBudget
 from agent.core.llm.types import LLMStreamChunk, ProviderUsage
@@ -114,6 +113,9 @@ class _FakeStrategyManager:
         self.payloads = payloads
         self.calls: list[dict[str, object]] = []
 
+    def run_prune(self, _context: SessionContext) -> int:
+        return 0
+
     async def run_compaction(
         self,
         *,
@@ -151,9 +153,17 @@ class _FakeToolRegistry:
 
 @final
 class _FakeAgentContext:
-    def __init__(self, llm_config: LLMConfig, strategy_manager: _FakeStrategyManager) -> None:
+    def __init__(
+        self,
+        llm_config: LLMConfig,
+        strategy_manager: _FakeStrategyManager,
+        session_manager: _FakeSessionManager | None = None,
+        adapter_registry: _FakeAdapterRegistry | None = None,
+    ) -> None:
         self.llm_config = llm_config
         self.strategy_manager = strategy_manager
+        self.session_manager = session_manager
+        self.adapter_registry = adapter_registry
         self.resolve_calls: list[tuple[str, str]] = []
 
     def resolve_llm_config_for_agent(self, agent_name: str, profile_id: str) -> LLMConfig:
@@ -169,22 +179,24 @@ class _FakeAgent:
         llm_config: LLMConfig,
         strategy_manager: _FakeStrategyManager,
         system_prompt: str | None = None,
+        session_manager: _FakeSessionManager | None = None,
+        adapter_registry: _FakeAdapterRegistry | None = None,
     ) -> None:
         self.tool_registry = _FakeToolRegistry()
-        self.context = _FakeAgentContext(llm_config, strategy_manager)
+        self.context = _FakeAgentContext(
+            llm_config,
+            strategy_manager,
+            session_manager=session_manager,
+            adapter_registry=adapter_registry,
+        )
         self._system_prompt = system_prompt
+
+    @staticmethod
+    def name() -> str:
+        return "test_agent"
 
     def get_system_prompt(self, _context: SessionContext) -> str | None:
         return self._system_prompt
-
-
-@final
-class _FakeFramework:
-    def __init__(self, agent: _FakeAgent | None) -> None:
-        self.agent = agent
-
-    def get_agent(self, _agent_name: str) -> _FakeAgent | None:
-        return self.agent
 
 
 def _make_context(
@@ -214,7 +226,7 @@ def _make_handler(
     llm_outcomes: list[_StreamOutcome],
     compaction_payloads: list[CompactionPayload],
     system_prompt: str | None = None,
-) -> tuple[LLMTurnHandler, _FakeSessionManager, _FakeLLMProvider, list[Event]]:
+) -> tuple[LLMTurnHandler, _FakeSessionManager, _FakeLLMProvider, list[Event], _FakeAgent]:
     session_manager = _FakeSessionManager(context)
     llm_config = _make_llm_config()
     provider = _FakeLLMProvider(llm_config, llm_outcomes)
@@ -224,71 +236,44 @@ def _make_handler(
         llm_config=llm_config,
         strategy_manager=strategy_manager,
         system_prompt=system_prompt,
+        session_manager=session_manager,
+        adapter_registry=adapter_registry,
     )
-    framework = _FakeFramework(agent)
     events: list[Event] = []
 
     async def emit_event(event: Event) -> None:
         events.append(event)
 
     handler = LLMTurnHandler(
-        session_manager=cast(SessionManager, cast(object, session_manager)),
-        adapter_registry=cast(AdapterRegistry, cast(object, adapter_registry)),
-        framework=cast(FrameworkProtocol, cast(object, framework)),
         emit_event=emit_event,
     )
-    return handler, session_manager, provider, events
+    return handler, session_manager, provider, events, agent
 
 
 @pytest.mark.asyncio
 async def test_run_raises_when_model_profile_id_missing() -> None:
     context = _make_context()
     context.model_profile_id = None
-    handler, _, _, _ = _make_handler(
+    handler, _, _, _, agent = _make_handler(
         context=context,
         llm_outcomes=[[LLMStreamChunk(content="ok", finish_reason="stop")]],
         compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
     )
 
     with pytest.raises(ValueError, match="has no model_profile_id"):
-        _ = await handler.run(context.session_id)
-
-
-@pytest.mark.asyncio
-async def test_run_raises_when_agent_not_found() -> None:
-    context = _make_context()
-    session_manager = _FakeSessionManager(context)
-    provider = _FakeLLMProvider(
-        _make_llm_config(),
-        [[LLMStreamChunk(content="ok", finish_reason="stop")]],
-    )
-    adapter_registry = _FakeAdapterRegistry(provider)
-    framework = _FakeFramework(None)
-
-    async def emit_event(_event: Event) -> None:
-        return None
-
-    handler = LLMTurnHandler(
-        session_manager=cast(SessionManager, cast(object, session_manager)),
-        adapter_registry=cast(AdapterRegistry, cast(object, adapter_registry)),
-        framework=cast(FrameworkProtocol, cast(object, framework)),
-        emit_event=emit_event,
-    )
-
-    with pytest.raises(ValueError, match="not found"):
-        _ = await handler.run(context.session_id)
+        _ = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
 
 @pytest.mark.asyncio
 async def test_run_happy_path_streams_text_and_returns_content() -> None:
     context = _make_context()
-    handler, session_manager, _, events = _make_handler(
+    handler, session_manager, _, events, agent = _make_handler(
         context=context,
         llm_outcomes=[[LLMStreamChunk(content="hello", finish_reason="stop")]],
         compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
     )
 
-    result = await handler.run(context.session_id)
+    result = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
     assert result.content == "hello"
     assert result.finish_reason == "stop"
@@ -305,7 +290,7 @@ async def test_run_happy_path_streams_text_and_returns_content() -> None:
 @pytest.mark.asyncio
 async def test_run_emits_reasoning_before_content() -> None:
     context = _make_context()
-    handler, _, _, events = _make_handler(
+    handler, _, _, events, agent = _make_handler(
         context=context,
         llm_outcomes=[
             [
@@ -316,7 +301,7 @@ async def test_run_emits_reasoning_before_content() -> None:
         compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
     )
 
-    result = await handler.run(context.session_id)
+    result = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
     assert result.content == "answer"
     assert result.thinking == "pondering "
@@ -330,13 +315,13 @@ async def test_run_emits_reasoning_before_content() -> None:
 @pytest.mark.asyncio
 async def test_run_emits_reasoning_when_stream_ends_with_thinking() -> None:
     context = _make_context()
-    handler, _, _, _ = _make_handler(
+    handler, _, _, _, agent = _make_handler(
         context=context,
         llm_outcomes=[[LLMStreamChunk(thinking="tail-thinking", finish_reason="stop")]],
         compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
     )
 
-    result = await handler.run(context.session_id)
+    result = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
     assert result.content == ""
     assert result.thinking == "tail-thinking"
@@ -355,7 +340,7 @@ async def test_run_accumulates_tool_calls_and_provider_usage() -> None:
         id="call-2",
         function=ToolFunctionPayload(name="write", arguments='{"path":"b"}'),
     )
-    handler, _, _, _ = _make_handler(
+    handler, _, _, _, agent = _make_handler(
         context=context,
         llm_outcomes=[
             [
@@ -371,7 +356,7 @@ async def test_run_accumulates_tool_calls_and_provider_usage() -> None:
         compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
     )
 
-    result = await handler.run(context.session_id)
+    result = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
     assert [tc.id for tc in result.tool_calls] == ["call-1", "call-2"]
     assert result.tokens.input_tokens == 11
@@ -383,7 +368,7 @@ async def test_run_accumulates_tool_calls_and_provider_usage() -> None:
 @pytest.mark.asyncio
 async def test_run_invokes_on_compaction_applied_for_pre_compaction() -> None:
     context = _make_context()
-    handler, _, _, _ = _make_handler(
+    handler, _, _, _, agent = _make_handler(
         context=context,
         llm_outcomes=[[LLMStreamChunk(content="ok", finish_reason="stop")]],
         compaction_payloads=[CompactionPayload(applied=True, reason="applied", stage="pre_call")],
@@ -391,7 +376,7 @@ async def test_run_invokes_on_compaction_applied_for_pre_compaction() -> None:
     on_compaction_applied_mock = AsyncMock()
     setattr(handler, "_on_compaction_applied", on_compaction_applied_mock)
 
-    _ = await handler.run(context.session_id)
+    _ = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
     on_compaction_applied_mock.assert_awaited_once()
 
@@ -400,7 +385,7 @@ async def test_run_invokes_on_compaction_applied_for_pre_compaction() -> None:
 async def test_run_retries_on_context_overflow_when_compaction_applied() -> None:
     context = _make_context()
     overflow = LLMProviderError(code="context_length_exceeded", message="overflow")
-    handler, _, provider, _ = _make_handler(
+    handler, _, provider, _, agent = _make_handler(
         context=context,
         llm_outcomes=[overflow, [LLMStreamChunk(content="after-retry", finish_reason="stop")]],
         compaction_payloads=[
@@ -411,7 +396,7 @@ async def test_run_retries_on_context_overflow_when_compaction_applied() -> None
         ],
     )
 
-    result = await handler.run(context.session_id)
+    result = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
     assert result.content == "after-retry"
     assert len(provider.stream_calls) == 2
@@ -431,28 +416,26 @@ async def test_run_reraises_on_overflow_when_retry_limit_reached() -> None:
     agent = _FakeAgent(
         llm_config=_make_llm_config(max_overflow_retries=0),
         strategy_manager=strategy_manager,
+        session_manager=session_manager,
+        adapter_registry=adapter_registry,
     )
-    framework = _FakeFramework(agent)
 
     async def emit_event(_event: Event) -> None:
         return None
 
     handler = LLMTurnHandler(
-        session_manager=cast(SessionManager, cast(object, session_manager)),
-        adapter_registry=cast(AdapterRegistry, cast(object, adapter_registry)),
-        framework=cast(FrameworkProtocol, cast(object, framework)),
         emit_event=emit_event,
     )
 
     with pytest.raises(LLMProviderError, match="overflow"):
-        _ = await handler.run(context.session_id)
+        _ = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
 
 @pytest.mark.asyncio
 async def test_run_reraises_on_overflow_when_compaction_not_applied() -> None:
     context = _make_context()
     overflow = LLMProviderError(code="context_length_exceeded", message="overflow")
-    handler, _, _, _ = _make_handler(
+    handler, _, _, _, agent = _make_handler(
         context=context,
         llm_outcomes=[overflow],
         compaction_payloads=[
@@ -462,20 +445,20 @@ async def test_run_reraises_on_overflow_when_compaction_not_applied() -> None:
     )
 
     with pytest.raises(LLMProviderError, match="overflow"):
-        _ = await handler.run(context.session_id)
+        _ = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
 
 @pytest.mark.asyncio
 async def test_run_reraises_non_overflow_error() -> None:
     context = _make_context()
-    handler, _, _, _ = _make_handler(
+    handler, _, _, _, agent = _make_handler(
         context=context,
         llm_outcomes=[RuntimeError("network-down")],
         compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
     )
 
     with pytest.raises(RuntimeError, match="network-down"):
-        _ = await handler.run(context.session_id)
+        _ = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
 
 def test_extract_provider_error_from_exception_and_cause_chain() -> None:
@@ -521,24 +504,6 @@ def test_is_context_overflow_error_delegates(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
-async def test_persist_session_metadata_calls_session_manager() -> None:
-    context = _make_context()
-    handler, session_manager, _, _ = _make_handler(
-        context=context,
-        llm_outcomes=[[LLMStreamChunk(content="ok", finish_reason="stop")]],
-        compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
-    )
-
-    persist_session_metadata = cast(
-        Callable[[str], Awaitable[None]],
-        getattr(handler, "_persist_session_metadata"),
-    )
-    await persist_session_metadata(context.session_id)
-
-    assert session_manager.saved_metadata_session_ids == [context.session_id]
-
-
-@pytest.mark.asyncio
 async def test_on_compaction_applied_saves_compaction_message_and_metadata() -> None:
     context = _make_context()
     compaction_message = InternalMessage.create_compaction(
@@ -548,17 +513,17 @@ async def test_on_compaction_applied_saves_compaction_message_and_metadata() -> 
     )
     context.messages.append(compaction_message)
 
-    handler, session_manager, _, _ = _make_handler(
+    handler, session_manager, _, _, _agent = _make_handler(
         context=context,
         llm_outcomes=[[LLMStreamChunk(content="ok", finish_reason="stop")]],
         compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
     )
 
     on_compaction_applied = cast(
-        Callable[[SessionContext], Awaitable[None]],
+        Callable[..., Awaitable[None]],
         getattr(handler, "_on_compaction_applied"),
     )
-    await on_compaction_applied(context)
+    await on_compaction_applied(context, session_manager)
 
     assert len(session_manager.storage.saved_messages) == 1
     saved_session_id, saved_message = session_manager.storage.saved_messages[0]
@@ -577,7 +542,7 @@ async def test_run_context_compaction_forwards_correct_arguments() -> None:
     run_compaction_mock = AsyncMock(return_value=payload)
     setattr(strategy_manager, "run_compaction", run_compaction_mock)
 
-    handler, _, provider, _ = _make_handler(
+    handler, _, provider, _, _agent = _make_handler(
         context=context,
         llm_outcomes=[[LLMStreamChunk(content="ok", finish_reason="stop")]],
         compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
@@ -619,14 +584,14 @@ async def test_run_reuses_existing_current_assistant_message_and_includes_system
     )
     assert isinstance(existing.info, AssistantMessageInfo)
 
-    handler, _, provider, _ = _make_handler(
+    handler, _, provider, _, agent = _make_handler(
         context=context,
         llm_outcomes=[[LLMStreamChunk(content="reused", finish_reason="stop")]],
         compaction_payloads=[CompactionPayload.noop(stage=CompactionStage.PRE_CALL.value)],
         system_prompt="system-guidance",
     )
 
-    result = await handler.run(context.session_id)
+    result = await handler.run(context.session_id, cast(BaseAgent, cast(object, agent)))
 
     assert result.message_id == existing.message_id
     assert provider.stream_calls

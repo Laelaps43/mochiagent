@@ -39,6 +39,7 @@ from .types import (
 from .framework import AgentFramework, get_framework
 from .framework import reset_framework as _reset_framework
 from .base_agent import BaseAgent
+from .sub_agent import SubAgentBase
 from .session import Session
 from .config import (
     ToolPolicyConfig,
@@ -169,6 +170,7 @@ __all__ = [
     "get_framework",
     "reset_framework",
     "BaseAgent",
+    "SubAgentBase",
     "Session",
     # Decorators & Registry
     "agent",

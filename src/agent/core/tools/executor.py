@@ -66,7 +66,12 @@ class ToolExecutor:
         self._batch_semaphore: asyncio.Semaphore = asyncio.Semaphore(concurrency)
         logger.info("ToolExecutor initialized (timeout={}s)", default_timeout)
 
-    async def execute(self, tool_call: ToolCallPayload) -> ToolResult:
+    async def execute(
+        self,
+        tool_call: ToolCallPayload,
+        *,
+        context: dict[str, object] | None = None,
+    ) -> ToolResult:
         """
         执行工具调用
 
@@ -164,20 +169,20 @@ class ToolExecutor:
                     success=False,
                 )
 
-            # 执行工具 (带超时控制)
+            # 执行工具 (带超时控制，优先用 tool 自己的 timeout)
+            exec_kwargs = {**arguments, **(context or {})}
+            tool_timeout = tool.timeout if tool.timeout is not None else self.default_timeout
             try:
                 result = await asyncio.wait_for(
-                    tool.execute(**arguments), timeout=self.default_timeout
+                    tool.execute(**exec_kwargs), timeout=tool_timeout or None
                 )
             except asyncio.TimeoutError:
-                logger.error(
-                    "Tool '{}' execution timeout after {}s", tool_name, self.default_timeout
-                )
+                logger.error("Tool '{}' execution timeout after {}s", tool_name, tool_timeout)
                 return ToolResult(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
                     result=None,
-                    error=f"Tool execution timeout after {self.default_timeout}s",
+                    error=f"Tool execution timeout after {tool_timeout}s",
                     success=False,
                 )
 
@@ -200,7 +205,12 @@ class ToolExecutor:
                 success=False,
             )
 
-    async def execute_batch(self, tool_calls: list[ToolCallPayload]) -> list[ToolResult]:
+    async def execute_batch(
+        self,
+        tool_calls: list[ToolCallPayload],
+        *,
+        context: dict[str, object] | None = None,
+    ) -> list[ToolResult]:
         """
         批量执行工具调用（并行执行）
 
@@ -217,7 +227,7 @@ class ToolExecutor:
 
         async def _limited_execute(tc: ToolCallPayload) -> ToolResult:
             async with self._batch_semaphore:
-                return await self.execute(tc)
+                return await self.execute(tc, context=context)
 
         tasks = [_limited_execute(tool_call) for tool_call in tool_calls]
 

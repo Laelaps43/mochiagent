@@ -8,14 +8,13 @@ from collections.abc import Awaitable, Callable
 from loguru import logger
 
 from agent.core.compression import CompactionPayload, CompactionStage
-from agent.core.llm import AdapterRegistry
+from agent.base_agent import BaseAgent
 from agent.core.llm.base import LLMProvider
 from agent.core.llm.errors import (
     LLMProviderError,
     is_context_overflow_error as _is_context_overflow,
 )
 from agent.core.llm.types import ProviderUsage
-from agent.core.loop._framework_protocol import FrameworkProtocol
 from agent.core.loop.turn_result import LLMTurnResult
 from agent.core.message import (
     Message as InternalMessage,
@@ -43,33 +42,26 @@ class LLMTurnHandler:
     def __init__(
         self,
         *,
-        session_manager: SessionManager,
-        adapter_registry: AdapterRegistry,
-        framework: FrameworkProtocol,
         emit_event: Callable[[Event], Awaitable[None]],
     ) -> None:
-        self.session_manager: SessionManager = session_manager
-        self.adapter_registry: AdapterRegistry = adapter_registry
-        self.framework: FrameworkProtocol = framework
         self._emit_event: Callable[[Event], Awaitable[None]] = emit_event
 
-    async def run(self, session_id: str) -> LLMTurnResult:
-        context = await self.session_manager.get_session(session_id)
+    async def run(self, session_id: str, agent: BaseAgent) -> LLMTurnResult:
+        session_manager = agent.context.session_manager
+        adapter_registry = agent.context.adapter_registry
+        if adapter_registry is None:
+            raise RuntimeError(f"Agent '{agent.name()}' has no adapter_registry in context.")
+
+        context = await session_manager.get_session(session_id)
 
         if not context.model_profile_id:
-            raise ValueError(
-                f"Session {session_id} has no model_profile_id. Please take_session with a valid model_profile_id first."
-            )
-
-        agent = self.framework.get_agent(context.agent_name)
-        if agent is None:
-            raise ValueError(f"Agent '{context.agent_name}' not found")
+            raise ValueError(f"Session {session_id} has no model_profile_id.")
 
         llm_config = agent.context.resolve_llm_config_for_agent(
             context.agent_name,
             context.model_profile_id,
         )
-        llm = self.adapter_registry.get(llm_config)
+        llm = adapter_registry.get(llm_config)
         compaction_events: list[CompactionPayload] = []
 
         # Prune old tool outputs before compaction check
@@ -85,7 +77,7 @@ class LLMTurnHandler:
         )
         compaction_events.append(pre_compaction)
         if pre_compaction.applied:
-            await self._on_compaction_applied(context)
+            await self._on_compaction_applied(context, session_manager)
 
         # 复用已有的 assistant message（tool_calls 轮次），或创建新的
         if context.current_message and isinstance(
@@ -140,7 +132,7 @@ class LLMTurnHandler:
                     if not entered_streaming_state and (
                         chunk.thinking or chunk.content or chunk.tool_calls or chunk.finish_reason
                     ):
-                        await self.session_manager.update_state(session_id, SessionState.STREAMING)
+                        await session_manager.update_state(session_id, SessionState.STREAMING)
                         entered_streaming_state = True
 
                     if chunk.thinking:
@@ -261,7 +253,7 @@ class LLMTurnHandler:
                 )
                 if context.current_message:
                     context.current_message.parts = []
-                await self._on_compaction_applied(context)
+                await self._on_compaction_applied(context, session_manager)
                 continue
 
         if provider_usage:
@@ -290,7 +282,7 @@ class LLMTurnHandler:
             reasoning_tokens=turn_tokens.reasoning_tokens,
             source=source,
         )
-        await self._persist_session_metadata(session_id)
+        await session_manager.save_session_metadata(session_id)
 
         last_compaction = (
             compaction_events[-1]
@@ -332,21 +324,17 @@ class LLMTurnHandler:
     def is_context_overflow_error(exc: Exception) -> bool:
         return _is_context_overflow(exc)
 
-    async def _persist_session_metadata(self, session_id: str) -> None:
-        await self.session_manager.save_session_metadata(session_id)
-
-    async def _on_compaction_applied(self, context: SessionContext) -> None:
-        """压缩成功后：持久化书签 + 回写元数据。事件已在 compactor.run() 中发射。"""
+    @staticmethod
+    async def _on_compaction_applied(
+        context: SessionContext, session_manager: SessionManager
+    ) -> None:
+        """压缩成功后：持久化书签 + 回写元数据。"""
         session_id = context.session_id
-
-        # 持久化书签消息
         for msg in reversed(context.messages):
             if isinstance(msg.info, CompactionMessageInfo):
-                await self.session_manager.storage.save_message(session_id, msg)
+                await session_manager.storage.save_message(session_id, msg)
                 break
-
-        # 回写元数据（含 last_compaction_message_id）
-        await self._persist_session_metadata(session_id)
+        await session_manager.save_session_metadata(session_id)
 
     async def _run_context_compaction(
         self,
