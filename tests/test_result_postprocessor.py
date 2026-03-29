@@ -83,6 +83,7 @@ async def test_small_result_inline(processor: ToolResultPostProcessor, storage: 
 async def test_large_result_creates_artifact(storage: MemoryStorage):
     cfg = ToolResultPostProcessConfig(
         summary_max_chars=50,
+        summary_max_lines=3000,
         preview_head_chars=10,
     )
     proc = ToolResultPostProcessor(config=cfg)
@@ -97,6 +98,27 @@ async def test_large_result_creates_artifact(storage: MemoryStorage):
     assert out.truncated is True
     assert out.artifact_ref is not None
     assert out.raw_size_chars == 200
+
+
+async def test_large_result_by_line_count_creates_artifact(storage: MemoryStorage):
+    cfg = ToolResultPostProcessConfig(
+        summary_max_chars=50 * 1024,
+        summary_max_lines=3,
+        preview_head_chars=50 * 1024,
+    )
+    proc = ToolResultPostProcessor(config=cfg)
+    many_lines = "a\nb\nc\nd\n"
+    result = _make_result(success=True, result=many_lines)
+    out = await proc.process(
+        session_id="sess_1",
+        tool_result=result,
+        tool_arguments={},
+        storage=storage,
+    )
+    assert out.truncated is True
+    assert out.artifact_ref is not None
+    assert out.summary is not None
+    assert "lines: 4 → 3" in out.summary
 
 
 async def test_large_result_no_artifact_support():
@@ -159,6 +181,7 @@ async def test_large_result_no_artifact_support():
 
     cfg = ToolResultPostProcessConfig(
         summary_max_chars=150,
+        summary_max_lines=3000,
         preview_head_chars=10,
     )
     proc = ToolResultPostProcessor(config=cfg)

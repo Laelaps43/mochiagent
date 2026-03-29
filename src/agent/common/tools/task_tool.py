@@ -13,6 +13,7 @@ from loguru import logger
 from agent.sub_agent import SubAgentBase
 
 from ...core.tools.base import Tool
+from ...core.tools.types import ToolResult
 
 if TYPE_CHECKING:
     from agent.core.bus.message_bus import MessageBus
@@ -50,7 +51,7 @@ class TaskTool(Tool):
     @property
     @override
     def timeout(self) -> int | None:
-        return None  # 无超时，由 max_iterations 控制
+        return 0  # 禁用墙钟超时，由 subagent 自身的 max_iterations 控制
 
     @property
     @override
@@ -154,11 +155,28 @@ class TaskTool(Tool):
             )
 
         if result.success:
+            from agent.core.runtime.result_postprocessor import ToolResultPostProcessor
+
+            processed = await ToolResultPostProcessor().process(
+                session_id=parent_session_id or result.session_id,
+                tool_result=ToolResult(
+                    tool_call_id="",
+                    tool_name=self.name,
+                    result=result.output,
+                    success=True,
+                ),
+                tool_arguments={"agent_name": agent_name, "prompt": prompt},
+                storage=self._session_manager.storage,
+            )
             state = SubAgentStateCompleted(
                 prompt=prompt,
-                output=result.output,
+                output=processed.summary or result.output,
                 child_session_id=result.session_id,
                 tokens=result.tokens,
+                artifact_ref=processed.artifact_ref,
+                artifact_path=processed.artifact_path,
+                raw_size_chars=processed.raw_size_chars,
+                truncated=processed.truncated,
                 time=TimeInfo(start=start_time, end=now_ms()),
             )
         else:

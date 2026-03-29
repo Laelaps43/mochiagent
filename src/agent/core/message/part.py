@@ -278,6 +278,10 @@ class SubAgentStateCompleted(BaseModel):
     output: str
     child_session_id: str
     tokens: TokenUsage = Field(default_factory=TokenUsage)
+    artifact_ref: str | None = None
+    artifact_path: str | None = None
+    raw_size_chars: int | None = None
+    truncated: bool = False
     time: TimeInfo
 
 

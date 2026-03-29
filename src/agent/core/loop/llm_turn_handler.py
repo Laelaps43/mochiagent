@@ -58,7 +58,7 @@ class LLMTurnHandler:
             raise ValueError(f"Session {session_id} has no model_profile_id.")
 
         llm_config = agent.context.resolve_llm_config_for_agent(
-            context.agent_name,
+            agent.name(),
             context.model_profile_id,
         )
         llm = adapter_registry.get(llm_config)
