@@ -46,6 +46,11 @@ class Tool(ABC):
         """
         pass
 
+    @property
+    def timeout(self) -> int | None:
+        """工具自定义超时（秒）。返回 None 使用 executor 默认值。"""
+        return None
+
     @abstractmethod
     async def execute(self, **kwargs: object) -> object:
         """

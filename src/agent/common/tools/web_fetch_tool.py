@@ -10,7 +10,6 @@ import httpx
 
 from agent.core.tools import Tool
 
-from ._utils import truncate_text
 from .results import ToolError, WebFetchSuccess
 
 _BLOCKED_NETWORKS = [
@@ -24,6 +23,9 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("fc00::/7"),
     ipaddress.ip_network("fe80::/10"),
 ]
+
+# 安全上限：防止下载无限大响应
+_SAFETY_MAX_CHARS = 1024 * 1024  # 1MB
 
 
 def _check_private_ip(host: str) -> bool:
@@ -46,12 +48,7 @@ async def _is_private_ip(host: str) -> bool:
 
 
 class WebFetchTool(Tool):
-    """
-    Fetch content from URL.
-    """
-
-    def __init__(self, max_chars: int = 20000):
-        self.max_chars: int = max_chars
+    """Fetch content from URL."""
 
     @property
     @override
@@ -113,8 +110,12 @@ class WebFetchTool(Tool):
                         return ToolError(error="Redirect to private/internal address is blocked")
                     response = await client.get(redirect_url)
 
-                text = response.text[: self.max_chars * 2]
-                output, truncated = truncate_text(text, self.max_chars)
+                text = response.text
+                # 安全上限截断，postprocessor 会做 artifact 保存
+                truncated = len(text) > _SAFETY_MAX_CHARS
+                if truncated:
+                    text = text[:_SAFETY_MAX_CHARS]
+
                 raw_content_type = cast(object, response.headers.get("content-type", ""))
                 content_type = (
                     raw_content_type if isinstance(raw_content_type, str) else str(raw_content_type)
@@ -125,7 +126,7 @@ class WebFetchTool(Tool):
                     url=str(response.url),
                     status_code=response.status_code,
                     content_type=content_type,
-                    content=output,
+                    content=text,
                     truncated=truncated,
                 )
         except httpx.HTTPStatusError as exc:

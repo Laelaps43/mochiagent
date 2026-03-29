@@ -14,13 +14,13 @@ from agent.common.tools.results import ExecResult
 
 
 def test_exec_tool_metadata() -> None:
-    tool = ExecTool(max_output_chars=123)
+    tool = ExecTool()
 
     definition = tool.to_definition()
 
     assert tool.name == "exec"
     assert tool.description == "Execute shell command."
-    assert tool.max_output_chars == 123
+    assert tool.timeout == 120
     assert definition.name == "exec"
     assert definition.required == ["command"]
 
@@ -62,15 +62,15 @@ async def test_exec_tool_uses_requested_workdir(tmp_path: Path) -> None:
     assert result.output.strip() == str(tmp_path)
 
 
-async def test_exec_tool_truncates_combined_output() -> None:
+async def test_exec_tool_does_not_truncate_small_output() -> None:
     command = f"{quote(sys.executable)} -c \"print('abcdefghij', end='')\""
 
-    result = await ExecTool(max_output_chars=5).execute(command=command)
+    result = await ExecTool().execute(command=command)
 
     assert isinstance(result, ExecResult)
     assert result.success is True
-    assert result.output == "abcde"
-    assert result.truncated is True
+    assert result.output == "abcdefghij"
+    assert result.truncated is False
 
 
 async def test_exec_tool_kills_process_when_cancelled(monkeypatch: MonkeyPatch) -> None:

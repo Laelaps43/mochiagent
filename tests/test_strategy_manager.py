@@ -150,7 +150,6 @@ async def test_strategy_manager_run_postprocess_uses_agent_override(tmp_path: Pa
         config=ToolResultPostProcessConfig(
             summary_max_chars=120,
             preview_head_chars=12,
-            preview_tail_chars=10,
         )
     )
     manager.set(StrategyKind.TOOL_RESULT_POSTPROCESS, "agent_a", processor)

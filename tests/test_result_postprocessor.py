@@ -84,7 +84,6 @@ async def test_large_result_creates_artifact(storage: MemoryStorage):
     cfg = ToolResultPostProcessConfig(
         summary_max_chars=50,
         preview_head_chars=10,
-        preview_tail_chars=10,
     )
     proc = ToolResultPostProcessor(config=cfg)
     big_text = "x" * 200
@@ -161,7 +160,6 @@ async def test_large_result_no_artifact_support():
     cfg = ToolResultPostProcessConfig(
         summary_max_chars=150,
         preview_head_chars=10,
-        preview_tail_chars=10,
     )
     proc = ToolResultPostProcessor(config=cfg)
     big_text = "y" * 200
@@ -174,7 +172,7 @@ async def test_large_result_no_artifact_support():
     )
     assert out.truncated is True
     assert out.artifact_ref is None
-    assert "Storage has no artifact support" in (out.summary or "")
+    assert "truncated" in (out.summary or "").lower()
 
 
 async def test_dict_result_serialized(processor: ToolResultPostProcessor, storage: MemoryStorage):

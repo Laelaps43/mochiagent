@@ -5,13 +5,18 @@ from typing import override
 
 from agent.core.tools import Tool
 
-from ._utils import truncate_text, validate_path_within_workspace
+from ._utils import validate_path_within_workspace
 from .results import ExecResult, ToolError
+
+# 安全上限：防止子进程输出无限大导致内存爆炸
+_SAFETY_MAX_CHARS = 1024 * 1024  # 1MB
 
 
 class ExecTool(Tool):
-    def __init__(self, max_output_chars: int = 20000):
-        self.max_output_chars: int = max_output_chars
+    @property
+    @override
+    def timeout(self) -> int | None:
+        return 120  # 2 minutes
 
     @property
     @override
@@ -60,7 +65,6 @@ class ExecTool(Tool):
         try:
             stdout_bytes, stderr_bytes = await proc.communicate()
         except asyncio.CancelledError:
-            # 外层 wait_for 超时会取消此协程，确保子进程被终止
             proc.kill()
             _ = await proc.wait()
             raise
@@ -68,11 +72,15 @@ class ExecTool(Tool):
         stderr = stderr_bytes.decode("utf-8", errors="replace")
 
         combined = stdout + ("\n" if stdout and stderr else "") + stderr
-        truncated_output, truncated = truncate_text(combined, self.max_output_chars)
+
+        # 安全上限截断（防止内存爆炸），postprocessor 会做 artifact 保存
+        truncated = len(combined) > _SAFETY_MAX_CHARS
+        if truncated:
+            combined = combined[:_SAFETY_MAX_CHARS]
 
         return ExecResult(
             success=proc.returncode == 0,
             exit_code=proc.returncode,
-            output=truncated_output,
+            output=combined,
             truncated=truncated,
         )

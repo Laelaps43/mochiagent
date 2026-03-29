@@ -22,7 +22,7 @@ from agent.core.tools.types import ToolResult
 class ToolResultPostProcessConfig(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    summary_max_chars: int = 25000
+    summary_max_chars: int = 50 * 1024  # 50KB, 超出写 artifact
     preview_head_chars: int = 20000
 
 

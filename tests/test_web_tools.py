@@ -92,22 +92,8 @@ async def test_web_fetch_404_returns_failure() -> None:
     assert result.status_code == 404
 
 
-async def test_web_fetch_content_truncated() -> None:
-    tool = WebFetchTool(max_chars=10)
-    long_text = "A" * 1000
-    fake_resp = _FakeResponse(200, text=long_text)
-    client = _FakeAsyncClient(fake_resp)
-    with (
-        patch("agent.common.tools.web_fetch_tool._is_private_ip", return_value=False),
-        patch("httpx.AsyncClient", return_value=client),
-    ):
-        result = await tool.execute(url="https://example.com")
-    assert isinstance(result, WebFetchSuccess)
-    assert result.truncated is True
-
-
-async def test_web_fetch_content_not_truncated() -> None:
-    tool = WebFetchTool(max_chars=10000)
+async def test_web_fetch_content_not_truncated_small() -> None:
+    tool = WebFetchTool()
     short_text = "short content"
     fake_resp = _FakeResponse(200, text=short_text)
     client = _FakeAsyncClient(fake_resp)
