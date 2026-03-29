@@ -35,6 +35,7 @@ class SessionContext:
         session_id: str,
         model_profile_id: str,
         agent_name: str = "general",
+        parent_session_id: str | None = None,
     ):
         self.session_id: str = session_id
         self.state: SessionState = SessionState.IDLE
@@ -44,6 +45,7 @@ class SessionContext:
         self.messages: list[Message] = []
         self.current_message: Message | None = None
         self.last_compaction_message_id: str | None = None
+        self.parent_session_id: str | None = parent_session_id
         self.created_at: datetime = datetime.now(tz=timezone.utc)
         self.updated_at: datetime = datetime.now(tz=timezone.utc)
 
@@ -182,6 +184,7 @@ class SessionContext:
             agent_name=self.agent_name,
             context_budget=self.context_budget,
             last_compaction_message_id=self.last_compaction_message_id,
+            parent_session_id=self.parent_session_id,
             created_at=self.created_at.isoformat(),
             updated_at=self.updated_at.isoformat(),
         )

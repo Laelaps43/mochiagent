@@ -3,11 +3,12 @@ LLM Provider Base - LLM提供商基类
 定义统一的LLM接口
 """
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
 from agent.core.message import Message as InternalMessage
-from agent.core.message.part import TextPart, ToolPart
+from agent.core.message.part import SubAgentPart, TextPart, ToolPart
 from agent.types import LLMConfig, ToolDefinition
 from .types import LLMStreamChunk
 
@@ -35,6 +36,37 @@ class LLMProvider(ABC):
             for part in msg.parts:
                 if isinstance(part, TextPart):
                     text_contents.append(part.text)
+                elif isinstance(part, SubAgentPart):
+                    state = part.state
+                    tool_calls.append(
+                        {
+                            "id": part.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": "task",
+                                "arguments": json.dumps(
+                                    {"agent_name": part.agent_name, "prompt": state.prompt},
+                                    ensure_ascii=False,
+                                ),
+                            },
+                        }
+                    )
+                    if state.status == "completed":
+                        tool_results.append(
+                            {
+                                "role": "tool",
+                                "content": state.output,
+                                "tool_call_id": part.call_id,
+                            }
+                        )
+                    elif state.status == "error":
+                        tool_results.append(
+                            {
+                                "role": "tool",
+                                "content": f"Error: {state.error}",
+                                "tool_call_id": part.call_id,
+                            }
+                        )
                 elif isinstance(part, ToolPart):
                     state = part.state
                     call_id = part.call_id

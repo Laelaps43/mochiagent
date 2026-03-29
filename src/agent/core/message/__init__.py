@@ -17,6 +17,11 @@ from .part import (
     ToolStateCompleted,
     ToolStateError,
     TimeInfo,
+    SubAgentPart,
+    SubAgentState,
+    SubAgentStateRunning,
+    SubAgentStateCompleted,
+    SubAgentStateError,
 )
 from .info import (
     MessageInfo,
@@ -48,7 +53,12 @@ __all__ = [
     "ToolStateCompleted",
     "ToolStateError",
     "TimeInfo",
-    # Part factory
+    # SubAgent Part
+    "SubAgentPart",
+    "SubAgentState",
+    "SubAgentStateRunning",
+    "SubAgentStateCompleted",
+    "SubAgentStateError",
     # Message types
     "MessageInfo",
     "ModelRef",

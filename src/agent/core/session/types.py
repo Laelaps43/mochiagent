@@ -64,6 +64,7 @@ class SessionMetadataData(BaseModel):
     agent_name: str
     context_budget: ContextBudget
     last_compaction_message_id: str | None = None
+    parent_session_id: str | None = None
     created_at: str
     updated_at: str
 

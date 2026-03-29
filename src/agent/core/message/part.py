@@ -9,6 +9,7 @@ from pydantic import BaseModel, BaseModel as _PydanticBaseModel, Discriminator, 
 
 from agent.core.utils import gen_id, now_ms
 from agent.core.tools.types import ToolCallPayload, ToolResult
+from agent.types import TokenUsage
 
 
 class TimeInfo(BaseModel):
@@ -258,10 +259,136 @@ class ToolPart(PartBase):
         )
 
 
+# ============ SubAgentPart - SubAgent 调用 ============
+
+
+class SubAgentStateRunning(BaseModel):
+    """SubAgent 状态 - running"""
+
+    status: Literal["running"] = "running"
+    prompt: str
+    time: TimeInfo
+
+
+class SubAgentStateCompleted(BaseModel):
+    """SubAgent 状态 - completed"""
+
+    status: Literal["completed"] = "completed"
+    prompt: str
+    output: str
+    child_session_id: str
+    tokens: TokenUsage = Field(default_factory=TokenUsage)
+    time: TimeInfo
+
+
+class SubAgentStateError(BaseModel):
+    """SubAgent 状态 - error"""
+
+    status: Literal["error"] = "error"
+    prompt: str
+    error: str
+    child_session_id: str | None = None
+    time: TimeInfo
+
+
+SubAgentState = Annotated[
+    SubAgentStateRunning | SubAgentStateCompleted | SubAgentStateError,
+    Discriminator("status"),
+]
+
+
+class SubAgentPart(PartBase):
+    """SubAgent 调用 Part"""
+
+    type: Literal["subagent"] = "subagent"
+    call_id: str
+    agent_name: str
+    depth: int = 1
+    state: SubAgentState
+    metadata: dict[str, object] | None = None
+
+    @classmethod
+    def create_running(
+        cls,
+        *,
+        session_id: str,
+        message_id: str,
+        call_id: str,
+        agent_name: str,
+        prompt: str,
+        depth: int = 1,
+    ) -> "SubAgentPart":
+        return cls(
+            session_id=session_id,
+            message_id=message_id,
+            call_id=call_id,
+            agent_name=agent_name,
+            depth=depth,
+            state=SubAgentStateRunning(
+                prompt=prompt,
+                time=TimeInfo(start=now_ms()),
+            ),
+        )
+
+    def update_to_completed(
+        self,
+        *,
+        output: str,
+        child_session_id: str,
+        tokens: TokenUsage | None = None,
+    ) -> "SubAgentPart":
+        if not isinstance(self.state, SubAgentStateRunning):
+            raise ValueError(
+                f"Cannot complete a SubAgentPart in '{self.state.status}' state; expected 'running'"
+            )
+        return SubAgentPart(
+            id=self.id,
+            session_id=self.session_id,
+            message_id=self.message_id,
+            call_id=self.call_id,
+            agent_name=self.agent_name,
+            depth=self.depth,
+            state=SubAgentStateCompleted(
+                prompt=self.state.prompt,
+                output=output,
+                child_session_id=child_session_id,
+                tokens=tokens or TokenUsage(),
+                time=TimeInfo(start=self.state.time.start, end=now_ms()),
+            ),
+            metadata=self.metadata,
+        )
+
+    def update_to_error(
+        self,
+        *,
+        error: str,
+        child_session_id: str | None = None,
+    ) -> "SubAgentPart":
+        if not isinstance(self.state, SubAgentStateRunning):
+            raise ValueError(
+                f"Cannot error a SubAgentPart in '{self.state.status}' state; expected 'running'"
+            )
+        return SubAgentPart(
+            id=self.id,
+            session_id=self.session_id,
+            message_id=self.message_id,
+            call_id=self.call_id,
+            agent_name=self.agent_name,
+            depth=self.depth,
+            state=SubAgentStateError(
+                prompt=self.state.prompt,
+                error=error,
+                child_session_id=child_session_id,
+                time=TimeInfo(start=self.state.time.start, end=now_ms()),
+            ),
+            metadata=self.metadata,
+        )
+
+
 # ============ Part Union Type ============
 
 # 完整 Part（存储/流转层，带 id/session_id/message_id）
 Part = Annotated[
-    TextPart | ReasoningPart | ToolPart,
+    TextPart | ReasoningPart | ToolPart | SubAgentPart,
     Discriminator("type"),
 ]

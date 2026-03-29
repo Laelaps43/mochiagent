@@ -56,6 +56,13 @@ class EventType(str, Enum):
     LLM_THINKING = "llm.thinking"
     LLM_RETRY = "llm.retry"
 
+    # SubAgent 事件
+    SUBAGENT_INVOKED = "subagent.invoked"
+    SUBAGENT_COMPLETED = "subagent.completed"
+
+    # 取消事件（非破坏性，不删数据）
+    SESSION_CANCELLED = "session.cancelled"
+
 
 class Event(BaseModel):
     """运行时事件对象"""

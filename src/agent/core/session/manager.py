@@ -348,6 +348,31 @@ class SessionManager:
 
         logger.info("Deleted session: {}", session_id)
 
+    async def get_child_sessions(self, parent_session_id: str) -> list[str]:
+        """查询某个 session 的所有直接子 session ID。"""
+        child_ids: list[str] = []
+        async with self._cache_lock:
+            for ctx in self._cache.values():
+                if ctx.parent_session_id == parent_session_id:
+                    child_ids.append(ctx.session_id)
+        return child_ids
+
+    async def cancel_session(self, session_id: str) -> None:
+        """取消 session 执行（非破坏性，不删数据）。级联取消所有子 session。"""
+        # 级联取消子 session
+        child_ids = await self.get_child_sessions(session_id)
+        for child_id in child_ids:
+            await self.cancel_session(child_id)
+
+        # 发布取消事件（EventLoop 监听后会 cancel active task）
+        await self.bus.publish(
+            Event(
+                type=EventType.SESSION_CANCELLED,
+                session_id=session_id,
+            )
+        )
+        logger.info("Cancelled session: {} (children: {})", session_id, len(child_ids))
+
     async def add_user_message(self, session_id: str, parts: list[UserInput]) -> Message:
         """添加用户消息并自动保存"""
         context = await self.get_session(session_id)

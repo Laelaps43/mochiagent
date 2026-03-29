@@ -22,6 +22,7 @@ from agent.core.message import (
     Message as InternalMessage,
     ReasoningPart,
     TextPart,
+    ToolPart,
     UserMessageInfo,
 )
 from agent.core.compression.stage import CompactionStage
@@ -215,6 +216,14 @@ class DefaultContextCompactor(ContextCompactor):
 
                 if isinstance(part, ReasoningPart):
                     total_chars += len(part.text)
+                    continue
+
+                if not isinstance(part, ToolPart):
+                    # SubAgentPart or other future part types
+                    state_data: dict[str, object] = part.state.model_dump()
+                    for val in state_data.values():
+                        if isinstance(val, str):
+                            total_chars += len(val)
                     continue
 
                 arguments = part.state.input.arguments

@@ -51,6 +51,10 @@ class Session:
         """获取会话绑定的模型 profile ID。"""
         return self._context.model_profile_id
 
+    async def cancel(self) -> None:
+        """取消 session 执行（非破坏性，级联取消子 session）。"""
+        await self._session_manager.cancel_session(self.session_id)
+
     @override
     def __repr__(self) -> str:
         return (

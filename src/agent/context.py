@@ -9,6 +9,7 @@ from __future__ import annotations
 from agent.core.message import UserInput
 from loguru import logger
 from .core.bus import MessageBus
+from .core.llm.provider import AdapterRegistry
 from .core.utils import normalize_profile_id
 from .core.runtime import AgentStrategyManager
 from .core.session import SessionManager
@@ -31,12 +32,14 @@ class AgentContext:
         strategy_manager: AgentStrategyManager,
         agent_name: str,
         llm_profiles: dict[str, LLMConfig],
+        adapter_registry: AdapterRegistry | None = None,
     ) -> None:
         self.session_manager: SessionManager = session_manager
         self.message_bus: MessageBus = message_bus
         self.strategy_manager: AgentStrategyManager = strategy_manager
         self.agent_name: str = agent_name
         self.llm_profiles: dict[str, LLMConfig] = llm_profiles
+        self.adapter_registry: AdapterRegistry | None = adapter_registry
 
     def resolve_llm_config_for_agent(self, agent_name: str, profile_id: str) -> LLMConfig:
         if agent_name != self.agent_name:
