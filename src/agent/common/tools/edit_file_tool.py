@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import override
 
 from agent.core.tools import Tool
-from agent.common.tools._utils import validate_path_within_workspace
 from agent.common.tools.results import EditFileSuccess, ToolError
 
 
@@ -63,10 +62,6 @@ class EditFileTool(Tool):
         encoding: str = "utf-8",
         **kwargs: object,
     ) -> object:
-        path_error = validate_path_within_workspace(path)
-        if path_error:
-            return ToolError(error=f"WORKSPACE_VIOLATION: {path_error}")
-
         file_path = Path(path)
         if not file_path.exists():
             return ToolError(error=f"File not found: {path}")

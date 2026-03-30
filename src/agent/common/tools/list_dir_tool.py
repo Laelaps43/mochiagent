@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import override
 
 from agent.core.tools import Tool
-from agent.common.tools._utils import validate_path_within_workspace
 from agent.common.tools.results import ListDirSuccess, ToolError
 
 
@@ -43,10 +42,6 @@ class ListDirTool(Tool):
 
     @override
     async def execute(self, path: str = ".", max_entries: int = 200, **kwargs: object) -> object:
-        path_error = validate_path_within_workspace(path)
-        if path_error:
-            return ToolError(error=f"WORKSPACE_VIOLATION: {path_error}")
-
         dir_path = Path(path)
         if not dir_path.exists():
             return ToolError(error=f"Directory not found: {path}")

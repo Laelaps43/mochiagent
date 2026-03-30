@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import override
+from typing import Literal, override
 
 from agent.core.storage.provider import StorageProvider
 from agent.core.tools import Tool
@@ -17,6 +17,11 @@ class ReadArtifactTool(Tool):
 
     def __init__(self, storage: StorageProvider) -> None:
         self._storage: StorageProvider = storage
+
+    @property
+    @override
+    def sandbox_mode(self) -> Literal["subprocess", "inprocess"]:
+        return "inprocess"
 
     @property
     @override

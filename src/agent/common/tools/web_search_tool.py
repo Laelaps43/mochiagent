@@ -21,6 +21,10 @@ class WebSearchTool(Tool):
     def __init__(self, api_key: SecretStr | None = None):
         self._api_key: SecretStr = api_key or SecretStr("")
 
+    @override
+    def serialize_init_args(self) -> dict[str, object]:
+        return {"api_key": self._api_key.get_secret_value()}
+
     @property
     @override
     def name(self) -> str:

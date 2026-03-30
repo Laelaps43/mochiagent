@@ -4,16 +4,16 @@ from collections.abc import Iterator
 
 import pytest
 
-from agent.common.tools._utils import reset_workspace_root
+from agent.sandbox.context import reset_sandbox
 from agent.core.bus import MessageBus
 from agent.core.session import SessionManager
 from agent.core.storage import MemoryStorage
 
 
 @pytest.fixture(autouse=True)
-def reset_workspace_root_after_each_test() -> Iterator[None]:
+def reset_sandbox_after_each_test() -> Iterator[None]:
     yield
-    reset_workspace_root()
+    reset_sandbox()
 
 
 @pytest.fixture

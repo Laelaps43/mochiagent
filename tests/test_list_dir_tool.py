@@ -1,20 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
-import pytest
-
-from agent.common.tools._utils import reset_workspace_root, set_workspace_root
 from agent.common.tools.list_dir_tool import ListDirTool
 from agent.common.tools.results import ListDirSuccess, ToolError
-
-
-@pytest.fixture
-def workspace_guard() -> Iterator[None]:
-    reset_workspace_root()
-    yield
-    reset_workspace_root()
 
 
 def test_list_dir_tool_metadata() -> None:
@@ -71,18 +60,3 @@ async def test_list_dir_rejects_file_path(tmp_path: Path) -> None:
 
     assert isinstance(result, ToolError)
     assert f"Path is not a directory: {file_path}" in result.error
-
-
-async def test_list_dir_rejects_workspace_violation(tmp_path: Path, workspace_guard: None) -> None:
-    _ = workspace_guard
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    outside_dir = tmp_path / "outside"
-    outside_dir.mkdir()
-    set_workspace_root(workspace)
-
-    result = await ListDirTool().execute(path=str(outside_dir))
-
-    assert isinstance(result, ToolError)
-    assert result.success is False
-    assert "WORKSPACE_VIOLATION:" in result.error

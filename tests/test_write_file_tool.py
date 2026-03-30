@@ -1,20 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
-import pytest
-
-from agent.common.tools._utils import reset_workspace_root, set_workspace_root
 from agent.common.tools.write_file_tool import WriteFileTool
 from agent.common.tools.results import ToolError, WriteFileSuccess
-
-
-@pytest.fixture
-def workspace_guard() -> Iterator[None]:
-    reset_workspace_root()
-    yield
-    reset_workspace_root()
 
 
 def test_write_file_tool_metadata() -> None:
@@ -61,22 +50,6 @@ async def test_write_file_supports_custom_encoding(tmp_path: Path) -> None:
     assert isinstance(result, WriteFileSuccess)
     assert result.bytes_written == len(content.encode("utf-16", errors="ignore"))
     assert file_path.read_text(encoding="utf-16") == content
-
-
-async def test_write_file_rejects_workspace_violation(
-    tmp_path: Path, workspace_guard: None
-) -> None:
-    _ = workspace_guard
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    blocked_path = tmp_path / "outside.txt"
-    set_workspace_root(workspace)
-
-    result = await WriteFileTool().execute(path=str(blocked_path), content="blocked")
-
-    assert isinstance(result, ToolError)
-    assert result.success is False
-    assert "WORKSPACE_VIOLATION:" in result.error
 
 
 async def test_write_file_returns_error_for_directory_path(tmp_path: Path) -> None:

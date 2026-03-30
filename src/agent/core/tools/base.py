@@ -3,7 +3,7 @@ Tool Base - 工具基类
 """
 
 from abc import ABC, abstractmethod
-from typing import cast
+from typing import Literal, cast
 
 from agent.types import ToolDefinition
 
@@ -50,6 +50,27 @@ class Tool(ABC):
     def timeout(self) -> int | None:
         """工具自定义超时（秒）。返回 None 使用 executor 默认值。"""
         return None
+
+    @property
+    def sandbox_mode(self) -> Literal["subprocess", "inprocess"]:
+        """Declare how the sandbox should execute this tool.
+
+        - ``"subprocess"`` (default): the tool may be serialised and executed
+          inside an OS-level sandbox worker subprocess.  This is the safe
+          default — user-defined tools automatically get OS isolation.
+        - ``"inprocess"``: the tool holds un-serialisable state (framework
+          singletons, live connections …) and must always run in the host
+          process with application-level protection only.
+        """
+        return "subprocess"
+
+    def serialize_init_args(self) -> dict[str, object]:
+        """Return constructor kwargs needed to re-create this tool in a worker.
+
+        Override this when the tool stores serialisable config (e.g. an API
+        key) that the worker needs.  The default assumes a no-arg constructor.
+        """
+        return {}
 
     @abstractmethod
     async def execute(self, **kwargs: object) -> object:

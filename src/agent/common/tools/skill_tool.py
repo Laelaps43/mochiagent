@@ -8,7 +8,7 @@ its description based on available skills.
 
 from __future__ import annotations
 
-from typing import override
+from typing import Literal, override
 
 from ..skill.loader import Skill
 from ...core.tools import Tool
@@ -42,6 +42,11 @@ class SkillTool(Tool):
                     These are the skills registered by the agent.
         """
         self._skills: dict[str, Skill] = skills
+
+    @property
+    @override
+    def sandbox_mode(self) -> Literal["subprocess", "inprocess"]:
+        return "inprocess"
 
     @property
     @override

@@ -5,11 +5,10 @@ from typing import override
 
 from agent.core.tools import Tool
 
-from ._utils import validate_path_within_workspace
-from .results import ExecResult, ToolError
+from agent.common.tools.results import ExecResult
 
-# 安全上限：防止子进程输出无限大导致内存爆炸
-_SAFETY_MAX_CHARS = 1024 * 1024  # 1MB
+# Safety cap for subprocess output (1 MB).
+_SAFETY_MAX_CHARS = 1024 * 1024
 
 
 class ExecTool(Tool):
@@ -52,10 +51,6 @@ class ExecTool(Tool):
     async def execute(
         self, command: str = "", workdir: str | None = None, **kwargs: object
     ) -> object:
-        if workdir:
-            path_error = validate_path_within_workspace(workdir)
-            if path_error:
-                return ToolError(error=f"WORKSPACE_VIOLATION: {path_error}")
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=workdir,
@@ -63,17 +58,28 @@ class ExecTool(Tool):
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout_bytes, stderr_bytes = await proc.communicate()
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            _ = await proc.wait()
+            return ExecResult(
+                success=False,
+                exit_code=-1,
+                output="Command timed out after 120s",
+                truncated=False,
+            )
         except asyncio.CancelledError:
             proc.kill()
             _ = await proc.wait()
             raise
+
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")
-
         combined = stdout + ("\n" if stdout and stderr else "") + stderr
 
-        # 安全上限截断（防止内存爆炸），postprocessor 会做 artifact 保存
         truncated = len(combined) > _SAFETY_MAX_CHARS
         if truncated:
             combined = combined[:_SAFETY_MAX_CHARS]

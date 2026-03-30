@@ -4,17 +4,17 @@ Tool Executor - 工具执行器
 
 import asyncio
 import json
-from pathlib import Path
 from jsonschema import ValidationError, validate as jsonschema_validate
 from loguru import logger
 
 from .policy import ToolPolicyEngine
 from .base import Tool
 from .registry import ToolRegistry
-from .security_guard import ToolSecurityGuard
-from agent.common.tools._utils import set_workspace_root
 from typing import cast
-from agent.config.tools import ToolRuntimeConfig, ToolPolicyConfig, ToolSecurityConfig
+from agent.config.tools import ToolRuntimeConfig, ToolPolicyConfig
+from agent.sandbox.abc import Sandbox
+from agent.sandbox.types import SandboxConfig
+from agent.sandbox.factory import create_sandbox
 from .types import ToolCallPayload, ToolResult
 
 
@@ -31,9 +31,7 @@ class ToolExecutor:
         policy: ToolPolicyEngine | None = None,
         policy_allow: set[str] | None = None,
         policy_deny: set[str] | None = None,
-        workspace_root: str | Path | None = None,
-        restrict_to_workspace: bool = True,
-        security: ToolSecurityConfig | None = None,
+        sandbox: Sandbox | SandboxConfig | None = None,
         max_batch_concurrency: int | None = None,
     ):
         """
@@ -42,6 +40,7 @@ class ToolExecutor:
         Args:
             registry: 工具注册表
             default_timeout: 默认超时时间(秒),默认30秒
+            sandbox: Sandbox 实例或 SandboxConfig（自动创建）
         """
         self.registry: ToolRegistry = registry
         self.default_timeout: int = default_timeout
@@ -51,20 +50,22 @@ class ToolExecutor:
                 deny=policy_deny,
             )
         )
-        self.security_guard: ToolSecurityGuard = ToolSecurityGuard(
-            root=Path(workspace_root) if workspace_root else Path.cwd(),
-            restrict=restrict_to_workspace,
-            config=security or ToolSecurityConfig(),
-        )
-        if restrict_to_workspace:
-            set_workspace_root(Path(workspace_root) if workspace_root else Path.cwd())
+
+        # 初始化 Sandbox
+        if isinstance(sandbox, SandboxConfig):
+            self.sandbox: Sandbox = create_sandbox(sandbox)
+        elif sandbox is not None:
+            self.sandbox = sandbox
+        else:
+            self.sandbox = create_sandbox(SandboxConfig())
+
         concurrency = (
             max_batch_concurrency
             if max_batch_concurrency is not None
             else ToolRuntimeConfig().max_batch_concurrency
         )
         self._batch_semaphore: asyncio.Semaphore = asyncio.Semaphore(concurrency)
-        logger.info("ToolExecutor initialized (timeout={}s)", default_timeout)
+        logger.info("ToolExecutor initialized (timeout={}s, sandbox={})", default_timeout, type(self.sandbox).__name__)
 
     async def execute(
         self,
@@ -153,28 +154,29 @@ class ToolExecutor:
                     success=False,
                 )
 
-            # 统一安全检查入口（PathChecks + CommandChecks）
-            security_decision = self.security_guard.validate_tool_call(tool, arguments)
-            if not security_decision.allowed:
+            # 沙箱安全检查
+            sandbox_decision = await self.sandbox.validate_tool_call(tool, arguments)
+            if not sandbox_decision.allowed:
                 logger.warning(
-                    "Tool '{}' blocked by security guard: {}",
+                    "Tool '{}' blocked by sandbox: {}",
                     tool_name,
-                    security_decision.reason,
+                    sandbox_decision.reason,
                 )
                 return ToolResult(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
                     result=None,
-                    error=f"TOOL_SECURITY_DENIED: {security_decision.reason}",
+                    error=f"TOOL_SECURITY_DENIED: {sandbox_decision.reason}",
                     success=False,
                 )
 
-            # 执行工具 (带超时控制，优先用 tool 自己的 timeout)
+            # 通过 sandbox.run_tool() 执行工具（sandbox 决定 in-process 或子进程）
             exec_kwargs = {**arguments, **(context or {})}
             tool_timeout = tool.timeout if tool.timeout is not None else self.default_timeout
             try:
                 result = await asyncio.wait_for(
-                    tool.execute(**exec_kwargs), timeout=tool_timeout or None
+                    self.sandbox.run_tool(tool, exec_kwargs),
+                    timeout=tool_timeout or None,
                 )
             except asyncio.TimeoutError:
                 logger.error("Tool '{}' execution timeout after {}s", tool_name, tool_timeout)

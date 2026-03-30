@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Protocol, override
+from typing import Literal, Protocol, override
 
 from mcp import ClientSession
 from mcp.types import Tool as MCPToolDef, TextContent
@@ -46,6 +46,11 @@ class MCPToolWrapper(Tool):
         }
         self._timeout: int = timeout
         self._manager: _MCPManagerProtocol = manager
+
+    @property
+    @override
+    def sandbox_mode(self) -> Literal["subprocess", "inprocess"]:
+        return "inprocess"
 
     @property
     @override

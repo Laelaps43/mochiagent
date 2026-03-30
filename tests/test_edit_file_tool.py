@@ -1,20 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
-import pytest
-
-from agent.common.tools._utils import reset_workspace_root, set_workspace_root
 from agent.common.tools.edit_file_tool import EditFileTool
 from agent.common.tools.results import EditFileSuccess, ToolError
-
-
-@pytest.fixture
-def workspace_guard() -> Iterator[None]:
-    reset_workspace_root()
-    yield
-    reset_workspace_root()
 
 
 def test_edit_file_tool_metadata() -> None:
@@ -105,20 +94,3 @@ async def test_edit_file_rejects_directory_path(tmp_path: Path) -> None:
 
     assert isinstance(result, ToolError)
     assert f"Path is a directory: {tmp_path}" in result.error
-
-
-async def test_edit_file_rejects_workspace_violation(tmp_path: Path, workspace_guard: None) -> None:
-    _ = workspace_guard
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    outside_file = tmp_path / "outside.txt"
-    _ = outside_file.write_text("secret", encoding="utf-8")
-    set_workspace_root(workspace)
-
-    result = await EditFileTool().execute(
-        path=str(outside_file), old_string="secret", new_string="x"
-    )
-
-    assert isinstance(result, ToolError)
-    assert result.success is False
-    assert "WORKSPACE_VIOLATION:" in result.error

@@ -8,7 +8,9 @@ import pytest
 
 from agent.core.tools.base import Tool
 from agent.core.tools.executor import ToolExecutor
-from agent.config.tools import ToolPolicyConfig, ToolSecurityConfig
+from agent.config.tools import ToolPolicyConfig
+from agent.sandbox.backends.noop import NoopSandbox
+from agent.sandbox.types import SandboxConfig
 from agent.core.tools.policy import ToolPolicyEngine
 from agent.core.tools.registry import ToolRegistry
 from agent.core.tools.types import ToolCallPayload, ToolFunctionPayload
@@ -80,7 +82,8 @@ def registry() -> ToolRegistry:
 
 @pytest.fixture
 def executor(registry: ToolRegistry) -> ToolExecutor:
-    return ToolExecutor(registry=registry, default_timeout=30)
+    sandbox = NoopSandbox(SandboxConfig())
+    return ToolExecutor(registry=registry, default_timeout=30, sandbox=sandbox)
 
 
 async def test_execute_success(executor: ToolExecutor):
@@ -107,7 +110,7 @@ async def test_execute_tool_not_found(executor: ToolExecutor):
 
 async def test_execute_policy_denied(registry: ToolRegistry):
     engine = ToolPolicyEngine(ToolPolicyConfig(deny={"echo"}))
-    exec_ = ToolExecutor(registry=registry, policy=engine)
+    exec_ = ToolExecutor(registry=registry, policy=engine, sandbox=NoopSandbox(SandboxConfig()))
     call = _make_call("echo", '{"text": "hi"}')
     result = await exec_.execute(call)
     assert result.success is False
@@ -122,7 +125,7 @@ async def test_execute_schema_validation_failure(executor: ToolExecutor):
 
 
 async def test_execute_timeout(registry: ToolRegistry):
-    exec_ = ToolExecutor(registry=registry, default_timeout=1)
+    exec_ = ToolExecutor(registry=registry, default_timeout=1, sandbox=NoopSandbox(SandboxConfig()))
     call = _make_call("slow", "{}")
     result = await exec_.execute(call)
     assert result.success is False
@@ -145,7 +148,7 @@ async def test_execute_batch_multiple(executor: ToolExecutor):
 
 
 async def test_execute_batch_mixed_results(registry: ToolRegistry):
-    exec_ = ToolExecutor(registry=registry, default_timeout=30)
+    exec_ = ToolExecutor(registry=registry, default_timeout=30, sandbox=NoopSandbox(SandboxConfig()))
     calls = [
         _make_call("echo", '{"text": "ok"}'),
         _make_call("echo", "BAD JSON"),
@@ -188,9 +191,7 @@ async def test_execute_security_guard_blocks(tmp_path: Path):
     reg.register(_PathTool())
     exec_ = ToolExecutor(
         registry=reg,
-        workspace_root=workspace,
-        restrict_to_workspace=True,
-        security=ToolSecurityConfig(enforce_workspace=True),
+        sandbox=SandboxConfig(workspace_root=workspace, restrict_to_workspace=True),
     )
     call = _make_call("path_tool", '{"path": "/etc/passwd"}')
     result = await exec_.execute(call)

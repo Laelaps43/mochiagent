@@ -1,20 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
-import pytest
-
-from agent.common.tools._utils import reset_workspace_root, set_workspace_root
 from agent.common.tools.read_file_tool import ReadFileTool
 from agent.common.tools.results import ReadFileSuccess, ToolError
-
-
-@pytest.fixture
-def workspace_guard() -> Iterator[None]:
-    reset_workspace_root()
-    yield
-    reset_workspace_root()
 
 
 def test_read_file_tool_metadata() -> None:
@@ -23,7 +12,7 @@ def test_read_file_tool_metadata() -> None:
     definition = tool.to_definition()
 
     assert tool.name == "read_file"
-    assert tool.description == "Read file content from disk."
+    assert tool.description == "Read file content."
     assert definition.name == "read_file"
     assert definition.required == ["path"]
 
@@ -90,19 +79,3 @@ async def test_read_file_rejects_directory_path(tmp_path: Path) -> None:
 
     assert isinstance(result, ToolError)
     assert f"Path is a directory: {tmp_path}" in result.error
-
-
-async def test_read_file_rejects_workspace_violation(tmp_path: Path, workspace_guard: None) -> None:
-    _ = workspace_guard
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    outside_file = tmp_path / "outside.txt"
-    _ = outside_file.write_text("secret", encoding="utf-8")
-    set_workspace_root(workspace)
-
-    result = await ReadFileTool().execute(path=str(outside_file))
-
-    assert isinstance(result, ToolError)
-    assert result.success is False
-    assert "WORKSPACE_VIOLATION:" in result.error
-    assert "outside the workspace root" in result.error
